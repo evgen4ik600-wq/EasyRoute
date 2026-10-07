@@ -1,0 +1,142 @@
+#!/bin/sh
+# Read-only EasyRoute diagnostics. Does not change UCI/network/firewall state.
+
+ok(){ printf '[OK] %s\n' "$*"; }
+warn(){ printf '[WARN] %s\n' "$*"; }
+fail(){ printf '[FAIL] %s\n' "$*"; }
+
+echo '=== EASYROUTE AUDIT ==='
+echo
+
+echo '=== VERSION ==='
+[ -f /etc/easyroute/version ] && echo "EasyRoute version: $(cat /etc/easyroute/version)" || fail '/etc/easyroute/version missing'
+echo
+
+echo '=== FILES / SYNTAX ==='
+for f in /usr/libexec/easyroute /usr/libexec/easyroute-url-update /usr/libexec/easyroute-catalog /usr/libexec/easyroute-dns /usr/libexec/easyroute-audit /usr/libexec/rpcd/luci.easyroute /etc/init.d/easyroute /etc/hotplug.d/iface/95-easyroute
+do
+    if [ -f "$f" ]; then
+        sh -n "$f" >/dev/null 2>&1 && ok "$f" || fail "syntax $f"
+    else
+        fail "$f missing"
+    fi
+done
+echo
+
+echo '=== RPC ==='
+ubus -v list luci.easyroute 2>/dev/null || fail 'luci.easyroute not registered'
+echo
+
+echo '=== STATUS ==='
+ubus call luci.easyroute status 2>/dev/null || fail 'status RPC failed'
+echo
+
+echo '=== PROFILES ==='
+ubus call luci.easyroute profiles 2>/dev/null || fail 'profiles RPC failed'
+echo
+
+echo '=== SELFTEST ==='
+ubus call luci.easyroute selftest 2>/dev/null || fail 'selftest RPC failed'
+echo
+
+echo '=== CATALOG DIRECT ==='
+/usr/libexec/easyroute-catalog catalog 2>&1
+echo "catalog_rc=$?"
+echo
+
+echo '=== CATALOG RPC ==='
+ubus call luci.easyroute catalog 2>&1
+echo "catalog_rpc_rc=$?"
+echo
+
+echo '=== OPENCCK MAIN/BETA ==='
+for base in https://iplist.opencck.org/ https://beta.iplist.opencck.org/; do
+    tmp="/tmp/easyroute-audit.$$"
+    wget -qO "$tmp" "${base}?format=json&data=group"
+    rc=$?
+    bytes="$(wc -c < "$tmp" 2>/dev/null || echo 0)"
+    jsonfilter -i "$tmp" -e '@' >/dev/null 2>&1
+    jrc=$?
+    echo "$base wget=$rc bytes=$bytes json=$jrc"
+    rm -f "$tmp"
+done
+echo
+
+echo '=== MULTI-SITE DOMAINS ==='
+tmp="/tmp/easyroute-audit.$$"
+wget -qO "$tmp" 'https://iplist.opencck.org/?format=text&data=domains&wildcard=1&site=chatgpt.com&site=instagram.com&site=youtube.com'
+echo "wget=$? bytes=$(wc -c < "$tmp" 2>/dev/null || echo 0) lines=$(wc -l < "$tmp" 2>/dev/null || echo 0)"
+head -n 5 "$tmp" 2>/dev/null
+rm -f "$tmp"
+echo
+
+echo '=== MULTI-SITE CIDR4 WARNING TEST ==='
+tmp="/tmp/easyroute-audit.$$"
+wget -qO "$tmp" 'https://iplist.opencck.org/?format=text&data=cidr4&site=chatgpt.com&site=instagram.com&site=youtube.com'
+echo "wget=$? bytes=$(wc -c < "$tmp" 2>/dev/null || echo 0) lines=$(wc -l < "$tmp" 2>/dev/null || echo 0)"
+awk '
+function pfx(line, a,n){n=split(line,a,"/"); return n==2?a[2]+0:32}
+{ if($0 ~ /^[0-9.]+\/[0-9]+$/ && pfx($0)<16){print; n++} }
+END{ if(n>0) print "broad_cidr_count=" n > "/dev/stderr"; }
+' "$tmp" 2>/tmp/easyroute-audit-cidr.$$
+cat /tmp/easyroute-audit-cidr.$$ 2>/dev/null
+rm -f "$tmp" /tmp/easyroute-audit-cidr.$$
+echo
+
+echo '=== AWG ==='
+if command -v awg >/dev/null 2>&1; then
+    ok 'awg binary present'
+    # Deliberately show only non-secret runtime fields.
+    awg show 2>/dev/null | sed -E       -e '/private key:/d'       -e '/preshared key:/d'       -e '/header protection key:/d'       -e '/^[[:space:]]*i[1-5]:/d'
+else
+    fail 'awg binary missing'
+fi
+echo
+
+echo '=== NETWORK AWG (REDACTED) ==='
+uci show network 2>/dev/null | grep -E 'amneziawg|\.AWG\.|amneziawg_AWG' |     sed -E       -e "/private_key=/s/=.*/='<redacted>'/"       -e "/preshared_key=/s/=.*/='<redacted>'/"       -e "/header_protection_key=/s/=.*/='<redacted>'/"       -e "/\.awg_i[1-5]=/s/=.*/='<redacted>'/"
+echo
+
+echo '=== POLICY ROUTING ==='
+ip rule show 2>/dev/null
+ip route show table 166 2>/dev/null || true
+ip -6 rule show 2>/dev/null || true
+echo
+
+echo '=== NFT / FIREWALL ==='
+nft list ruleset 2>/dev/null | grep -n -E 'easyroute|er_' | head -n 120
+fw4 -q check >/dev/null 2>&1 && ok 'fw4 check' || fail 'fw4 check'
+echo
+
+echo '=== DNS ==='
+dnsmasq --test --conf-file=/etc/dnsmasq.conf 2>&1
+echo "dnsmasq_test_rc=$?"
+uci show dhcp.@dnsmasq[0] 2>/dev/null | grep -E 'server|noresolv|doh_|nftset' || true
+/usr/libexec/easyroute-dns status 2>/dev/null || true
+echo
+
+echo '=== RULES ==='
+uci show easyroute 2>/dev/null
+echo
+
+echo '=== LISTS ==='
+ls -lah /etc/easyroute/lists 2>/dev/null
+for f in /etc/easyroute/lists/*.txt; do
+    [ -f "$f" ] || continue
+    echo "--- $f ---"
+    echo "lines=$(wc -l < "$f") bytes=$(wc -c < "$f")"
+done
+echo
+
+echo '=== CRON ==='
+grep -n -A3 -B2 EASYROUTE /etc/crontabs/root 2>/dev/null || true
+echo
+
+echo '=== LOCKS ==='
+ls -ld /tmp/easyroute-*.lock 2>/dev/null || echo 'no EasyRoute locks'
+echo
+
+echo '=== RECENT EASYROUTE LOGS ==='
+logread 2>/dev/null | grep -i -E 'easyroute|amnezia|awg|dnsmasq|nft|fw4|https-dns-proxy' |     sed -E       -e 's/(private[_ ]key[^= :]*[=:])[[:space:]]*[^ ]+/\1 <redacted>/Ig'       -e 's/(preshared[_ ]key[^= :]*[=:])[[:space:]]*[^ ]+/\1 <redacted>/Ig' | tail -n 120
+echo
+echo '=== AUDIT DONE ==='
