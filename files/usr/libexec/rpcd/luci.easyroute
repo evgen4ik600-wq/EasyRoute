@@ -110,6 +110,7 @@ list_rules() {
         source_url="$(uci -q get "easyroute.$id.source_url" 2>/dev/null || true)"
         catalog_main_sites="$(uci -q get "easyroute.$id.catalog_main_sites" 2>/dev/null || true)"
         catalog_beta_sites="$(uci -q get "easyroute.$id.catalog_beta_sites" 2>/dev/null || true)"
+        catalog_use_cidr4="$(uci -q get "easyroute.$id.catalog_use_cidr4" 2>/dev/null || echo 0)"
         site_count="$(printf '%s %s\n' "$catalog_main_sites" "$catalog_beta_sites" | awk '{print NF}')"
         auto_update="$(uci -q get "easyroute.$id.auto_update" 2>/dev/null || echo 1)"
         update_interval="$(uci -q get "easyroute.$id.update_interval" 2>/dev/null || echo 86400)"
@@ -128,6 +129,7 @@ list_rules() {
         json_add_string source_url "$source_url"
         json_add_string catalog_main_sites "$catalog_main_sites"
         json_add_string catalog_beta_sites "$catalog_beta_sites"
+        json_add_boolean catalog_use_cidr4 "$catalog_use_cidr4"
         json_add_int site_count "${site_count:-0}"
         json_add_boolean auto_update "$auto_update"
         json_add_int update_interval "${update_interval:-86400}"
@@ -161,6 +163,7 @@ get_rule() {
     json_add_string source_url "$(uci -q get "easyroute.$id.source_url" 2>/dev/null || true)"
     json_add_string catalog_main_sites "$(uci -q get "easyroute.$id.catalog_main_sites" 2>/dev/null || true)"
     json_add_string catalog_beta_sites "$(uci -q get "easyroute.$id.catalog_beta_sites" 2>/dev/null || true)"
+    json_add_boolean catalog_use_cidr4 "$(uci -q get "easyroute.$id.catalog_use_cidr4" 2>/dev/null || echo 0)"
     json_add_boolean auto_update "$(uci -q get "easyroute.$id.auto_update" 2>/dev/null || echo 1)"
     json_add_int update_interval "$(uci -q get "easyroute.$id.update_interval" 2>/dev/null || echo 86400)"
     json_add_string last_update "$(cat "$RUNDIR/$id.success" 2>/dev/null || cat "$RUNDIR/$id.last" 2>/dev/null || echo 0)"
@@ -727,11 +730,13 @@ save_catalog() {
     json_get_var profile profile
     json_get_var main_sites main_sites
     json_get_var beta_sites beta_sites
+    json_get_var use_cidr4 use_cidr4
 
     name="$(printf '%s' "$name" | tr '\r\n' '  ' | cut -c1-80)"
     [ -n "$name" ] || name='📦 Набор OpenCCK'
     main_sites="$(printf '%s' "$main_sites" | tr ',\r\n\t' '    ' | xargs 2>/dev/null || true)"
     beta_sites="$(printf '%s' "$beta_sites" | tr ',\r\n\t' '    ' | xargs 2>/dev/null || true)"
+    case "$use_cidr4" in 1|true) use_cidr4=1 ;; *) use_cidr4=0 ;; esac
     [ -n "$main_sites" ] || [ -n "$beta_sites" ] || { reply 0 'Выберите хотя бы один сервис'; return; }
     valid_site_list "$main_sites" || { reply 0 'Некорректный список основного каталога'; return; }
     valid_site_list "$beta_sites" || { reply 0 'Некорректный список beta-каталога'; return; }
@@ -772,6 +777,7 @@ save_catalog() {
     uci set "easyroute.$id.source_type=catalog"
     uci set "easyroute.$id.catalog_main_sites=$main_sites"
     uci set "easyroute.$id.catalog_beta_sites=$beta_sites"
+    uci set "easyroute.$id.catalog_use_cidr4=$use_cidr4"
     uci set "easyroute.$id.auto_update=1"
     uci set "easyroute.$id.update_interval=86400"
     if [ -n "$profile" ] && [ "$profile" != '__default' ]; then
@@ -804,9 +810,14 @@ save_catalog() {
 dns_status() {
     enabled="$(uci -q get easyroute.main.secure_dns 2>/dev/null || echo 0)"
     provider="$(uci -q get easyroute.main.dns_provider 2>/dev/null || true)"
+    external=0
+    if pidof https-dns-proxy >/dev/null 2>&1 || pidof dnscrypt-proxy >/dev/null 2>&1; then external=1; fi
+    servers="$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)"
+    if [ "$external" = '0' ]; then
+        for s in $servers; do case "$s" in 127.0.0.1#5453) ;; 127.0.0.1#*|::1#*) external=1 ;; esac; done
+    fi
     running=0; forward=0; healthy=0
     pidof stubby >/dev/null 2>&1 && running=1
-    servers="$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)"
     printf '%s\n' "$servers" | grep -Fq '127.0.0.1#5453' && forward=1
     if [ "$enabled" = '1' ] && [ "$running" = '1' ] && [ "$forward" = '1' ] &&
        [ "$(uci -q get dhcp.@dnsmasq[0].noresolv 2>/dev/null || echo 0)" = '1' ]; then
@@ -816,6 +827,7 @@ dns_status() {
     json_add_boolean ok 1
     json_add_boolean enabled "$enabled"
     json_add_string provider "$provider"
+    json_add_boolean external "$external"
     json_add_boolean running "$running"
     json_add_boolean forward "$forward"
     json_add_boolean healthy "$healthy"
@@ -848,7 +860,7 @@ dns_apply() {
 
 selftest() {
     iface="$(detect_iface)"
-    internet=0; vpn=0; firewall=0; dns=0; routing=0; updater=0; conflicts=0; dot=1
+    internet=0; vpn=0; firewall=0; dns=0; routing=0; updater=0; catalog_ok=0; conflicts=0; dot=1
     tmp="/tmp/easyroute-selftest.$$"
 
     nslookup openwrt.org 127.0.0.1 >/dev/null 2>&1 && dns=1
@@ -897,6 +909,10 @@ selftest() {
     done
     [ "$expected" -gt 0 ] && [ "$good" -eq "$expected" ] && routing=1
 
+    if [ -x /usr/libexec/easyroute-catalog ] && /usr/libexec/easyroute-catalog catalog >/dev/null 2>&1; then
+        catalog_ok=1
+    fi
+
     if [ -x /usr/libexec/easyroute-url-update ]; then
         if wget -qO "$tmp" --timeout=10 'https://iplist.opencck.org/?format=text&data=domains&site=instagram.com&wildcard=1' >/dev/null 2>&1 && [ -s "$tmp" ]; then
             updater=1
@@ -905,12 +921,13 @@ selftest() {
     fi
 
     all_ok=0
-    [ "$internet" = 1 ] && [ "$vpn" = 1 ] && [ "$firewall" = 1 ] && [ "$dns" = 1 ] && [ "$routing" = 1 ] && [ "$updater" = 1 ] && [ "$conflicts" = 0 ] && [ "$dot" = 1 ] && all_ok=1
+    [ "$internet" = 1 ] && [ "$vpn" = 1 ] && [ "$firewall" = 1 ] && [ "$dns" = 1 ] && [ "$routing" = 1 ] && [ "$updater" = 1 ] && [ "$catalog_ok" = 1 ] && [ "$conflicts" = 0 ] && [ "$dot" = 1 ] && all_ok=1
 
     json_init; json_add_boolean ok 1
     json_add_boolean internet "$internet"; json_add_boolean vpn "$vpn"
     json_add_boolean firewall "$firewall"; json_add_boolean dns "$dns"
     json_add_boolean routing "$routing"; json_add_boolean updater "$updater"
+    json_add_boolean catalog "$catalog_ok"
     json_add_boolean dot "$dot"; json_add_boolean conflicts "$conflicts"; json_add_boolean all_ok "$all_ok"
     json_dump
 }
@@ -979,6 +996,7 @@ case "${1:-}" in
             json_add_string profile String
             json_add_string main_sites String
             json_add_string beta_sites String
+            json_add_boolean use_cidr4 Boolean
         json_close_object
         json_add_object dns_status; json_close_object
         json_add_object dns_apply; json_add_boolean enabled Boolean; json_add_string provider String; json_close_object
