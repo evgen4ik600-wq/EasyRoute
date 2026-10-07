@@ -22,14 +22,16 @@ acquire_lock() {
         return 0
     fi
     oldpid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
-    if [ -n "$oldpid" ] && ! kill -0 "$oldpid" 2>/dev/null; then
-        rm -rf "$LOCKDIR"
-        mkdir "$LOCKDIR" 2>/dev/null || return 1
-        printf '%s\n' "$$" > "$LOCKDIR/pid"
-        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
-        return 0
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null &&
+       [ -r "/proc/$oldpid/cmdline" ] &&
+       tr '\000' ' ' < "/proc/$oldpid/cmdline" 2>/dev/null | grep -Fq '/usr/libexec/easyroute'; then
+        return 1
     fi
-    return 1
+    rm -rf "$LOCKDIR"
+    mkdir "$LOCKDIR" 2>/dev/null || return 1
+    printf '%s\n' "$" > "$LOCKDIR/pid"
+    trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+    return 0
 }
 
 log() { logger -t easyroute "$*" 2>/dev/null || true; }
@@ -157,6 +159,29 @@ rule_slot_conflict() {
     return 0
 }
 
+table_conflict() {
+    local family="$1" prio="$2" mark="$3" table="$4" rules own routes
+    if [ "$family" = '6' ]; then
+        rules="$(ip -6 rule show 2>/dev/null | grep -E "(lookup|table) $table([[:space:]]|$)" || true)"
+        own="$(printf '%s\n' "$rules" | awk -v p="$prio:" '$1==p{print}' | grep -F "fwmark $mark/0xff" || true)"
+        routes="$(ip -6 route show table "$table" 2>/dev/null || true)"
+    else
+        rules="$(ip rule show 2>/dev/null | grep -E "(lookup|table) $table([[:space:]]|$)" || true)"
+        own="$(printf '%s\n' "$rules" | awk -v p="$prio:" '$1==p{print}' | grep -F "fwmark $mark/0xff" || true)"
+        routes="$(ip route show table "$table" 2>/dev/null || true)"
+    fi
+
+    # Любое другое правило, использующее эту таблицу, означает чужое владение.
+    if [ -n "$rules" ]; then
+        foreign="$(printf '%s\n' "$rules" | grep -Fv "$own" || true)"
+        [ -z "$foreign" ] || return 0
+    fi
+
+    # Непустая таблица без нашего ожидаемого правила тоже считается чужой.
+    [ -z "$routes" ] || [ -n "$own" ] || return 0
+    return 1
+}
+
 route_up() {
     local id iface dev m t n enabled prio
     n=0
@@ -166,6 +191,10 @@ route_up() {
         prio="$((RULE_PRIO+n))"
         if rule_slot_conflict 4 "$prio" "$m" "$t"; then
             echo "Конфликт ip rule: priority $prio уже занята другим правилом." >&2
+            return 1
+        fi
+        if table_conflict 4 "$prio" "$m" "$t"; then
+            echo "Конфликт routing table $t: таблица уже используется другим правилом." >&2
             return 1
         fi
         n=$((n+1))
