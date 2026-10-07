@@ -4,7 +4,7 @@
     "order": 85,
     "action": {
       "type": "view",
-      "path": "easyroute/routes-v126"
+      "path": "easyroute/routes-v1216"
     },
     "depends": {
       "acl": [
