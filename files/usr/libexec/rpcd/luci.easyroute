@@ -15,7 +15,13 @@ reply() {
     json_dump
 }
 
-valid_id() { printf '%s' "$1" | grep -Eq '^[rvd][0-9A-Za-z_-]+
+valid_id() { printf '%s' "$1" | grep -Eq '^[rvd][0-9A-Za-z_-]+$'; }
+
+sync_auto_vpns() {
+    [ -x /usr/libexec/easyroute-vpn-sync ] || return 0
+    /usr/libexec/easyroute-vpn-sync >/dev/null 2>&1 || true
+}
+
 rule_ids() {
     uci show easyroute 2>/dev/null | sed -n "s/^easyroute\.\([^.=]*\)=rule$/\1/p"
 }
