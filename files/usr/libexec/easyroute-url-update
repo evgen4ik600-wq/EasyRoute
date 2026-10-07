@@ -5,6 +5,7 @@ BASE='/etc/easyroute'
 LISTDIR="$BASE/lists"
 RUNDIR='/tmp/easyroute/url-updates'
 MAX_BYTES=262144
+CATALOG_MAX_BYTES=1048576
 RESERVE_KB=1024
 DEFAULT_INTERVAL=86400
 RETRY_INTERVAL=300
@@ -121,24 +122,59 @@ check_flash() {
 }
 
 update_one_raw() {
-    local id="$1" url file tmp msg count
+    local id="$1" url file tmp msg count source_type bytes
     RULE_CHANGED=0
     valid_id "$id" || { fail 'Invalid rule ID'; return 1; }
 
-    url="$(uci -q get "easyroute.$id.source_url" 2>/dev/null || true)"
-    [ -n "$url" ] || { fail 'URL is not configured for this rule'; return 1; }
+    source_type="$(uci -q get "easyroute.$id.source_type" 2>/dev/null || echo manual)"
 
     mkdir -p "$LISTDIR" "$RUNDIR"
     file="$LISTDIR/$id.txt"
-    tmp="/tmp/easyroute-url.$id.$$"
+    tmp="/tmp/easyroute-url.$id.$"
 
-    if ! msg="$(download_url "$url" "$tmp" 2>&1)"; then
-        write_status "$id" 'error' "$msg"
-        log "$id: $msg"
-        rm -f "$tmp"
-        fail "$msg"
-        return 1
-    fi
+    case "$source_type" in
+        url)
+            url="$(uci -q get "easyroute.$id.source_url" 2>/dev/null || true)"
+            [ -n "$url" ] || { fail 'URL is not configured for this rule'; return 1; }
+            if ! msg="$(download_url "$url" "$tmp" 2>&1)"; then
+                write_status "$id" 'error' "$msg"
+                log "$id: $msg"
+                rm -f "$tmp"
+                fail "$msg"
+                return 1
+            fi
+            ;;
+        catalog)
+            [ -x /usr/libexec/easyroute-catalog ] || {
+                fail 'Catalog helper is not installed'
+                return 1
+            }
+            rm -f "$tmp"
+            if ! msg="$(/usr/libexec/easyroute-catalog build "$id" "$tmp" 2>&1)"; then
+                write_status "$id" 'error' "$msg"
+                log "$id: $msg"
+                rm -f "$tmp"
+                fail "$msg"
+                return 1
+            fi
+            [ -s "$tmp" ] || {
+                write_status "$id" 'error' 'Catalog returned an empty list'
+                fail 'Catalog returned an empty list'
+                return 1
+            }
+            bytes="$(wc -c < "$tmp" | tr -d ' ')"
+            [ "${bytes:-0}" -le "$CATALOG_MAX_BYTES" ] || {
+                rm -f "$tmp"
+                write_status "$id" 'error' 'Catalog list is larger than 1 MiB'
+                fail 'Catalog list is larger than 1 MiB'
+                return 1
+            }
+            ;;
+        *)
+            fail 'This rule is not remotely updateable'
+            return 1
+            ;;
+    esac
 
     if [ -f "$file" ] && cmp -s "$tmp" "$file"; then
         write_status "$id" 'ok' 'No changes'
@@ -195,10 +231,10 @@ update_one() {
         fail 'Rule not found'
         return 1
     }
-    [ "$(uci -q get "easyroute.$id.source_type" 2>/dev/null || echo manual)" = 'url' ] || {
-        fail 'This is not a URL rule'
-        return 1
-    }
+    case "$(uci -q get "easyroute.$id.source_type" 2>/dev/null || echo manual)" in
+        url|catalog) ;;
+        *) fail 'This rule is not remotely updateable'; return 1 ;;
+    esac
 
     file="$LISTDIR/$id.txt"
     backup="/tmp/easyroute-url-old.$id.$$"
@@ -238,7 +274,10 @@ update_many() {
     : > "$changed_file"
 
     for id in $(rule_ids); do
-        [ "$(uci -q get "easyroute.$id.source_type" 2>/dev/null || echo manual)" = 'url' ] || continue
+        case "$(uci -q get "easyroute.$id.source_type" 2>/dev/null || echo manual)" in
+            url|catalog) ;;
+            *) continue ;;
+        esac
 
         if [ "$mode" = 'due' ]; then
             auto="$(uci -q get "easyroute.$id.auto_update" 2>/dev/null || echo 1)"
