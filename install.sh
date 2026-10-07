@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 
-REPO_BASE='https://raw.githubusercontent.com/evgen4ik600-wq/EasyRoute/main'
+VERSION='1.1.24'
+REPO_REF='65aa9fa512ef9968766f39760f2326334bd0048c'
+REPO_BASE="https://raw.githubusercontent.com/evgen4ik600-wq/EasyRoute/$REPO_REF"
 AWG_INSTALL_URL='https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/03b62269e2edc168504f057cffaafda11b25ed92/amneziawg-install.sh'
 TMP='/tmp/easyroute-install'
 BACKUP='/etc/easyroute/backup'
@@ -51,7 +53,7 @@ if ! command -v awg >/dev/null 2>&1 || ! pkg_has kmod-amneziawg || ! pkg_has luc
 fi
 [ "${FREE_KB:-0}" -ge "$MIN_KB" ] || fail "Слишком мало свободной flash: ${FREE_KB:-0} КБ. Для безопасной установки нужно минимум ${MIN_KB} КБ."
 
-say "EasyRoute v1.1.0 bootstrap: OpenWrt $VER, свободно $((FREE_KB/1024)) МБ"
+say "EasyRoute v$VERSION bootstrap: OpenWrt $VER, свободно $((FREE_KB/1024)) МБ"
 
 # Устанавливаем поддержку AmneziaWG 3.1, но НЕ создаём VPN-подключение.
 if ! command -v awg >/dev/null 2>&1 || ! pkg_has kmod-amneziawg || ! pkg_has luci-proto-amneziawg; then
@@ -112,6 +114,7 @@ grep -q '"admin/network/easyroute"' "$TMP/files/usr/share/luci/menu.d/luci-app-e
 grep -q '"luci-app-easyroute"' "$TMP/files/usr/share/rpcd/acl.d/luci-app-easyroute.json" || fail 'Повреждён ACL.'
 
 mkdir -p /etc/easyroute/lists "$BACKUP"
+printf '%s\n' "$VERSION" > /etc/easyroute/version
 if [ ! -f "$BACKUP/.created" ]; then
     cp -p /etc/dnsmasq.conf "$BACKUP/dnsmasq.conf" 2>/dev/null || true
     cp -p /etc/config/firewall "$BACKUP/firewall" 2>/dev/null || true
@@ -183,7 +186,7 @@ say 'Установлено:'
 say '  ✓ AmneziaWG 3.1'
 say '  ✓ LuCI-протокол AmneziaWG'
 say '  ✓ dnsmasq-full + nftset'
-say '  ✓ EasyRoute'
+say "  ✓ EasyRoute $VERSION"
 say '  ✓ URL-списки с автообновлением каждые 24 часа'
 say "Свободно во flash: $((FREE2/1024)) МБ"
 say ''
