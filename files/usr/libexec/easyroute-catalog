@@ -1,0 +1,183 @@
+#!/bin/sh
+set -u
+
+. /usr/share/libubox/jshn.sh
+
+MAIN_BASE='https://iplist.opencck.org/'
+BETA_BASE='https://beta.iplist.opencck.org/'
+TMPROOT="/tmp/easyroute-catalog.$$"
+MAX_CATALOG_JSON=131072
+MAX_RESULT_BYTES=1048576
+CHUNK_SITES=30
+
+fail() { printf '%s\n' "$*" >&2; return 1; }
+
+cleanup() { rm -rf "$TMPROOT"; }
+trap cleanup EXIT INT TERM
+mkdir -p "$TMPROOT"
+
+fetch_file() {
+    local url="$1" out="$2"
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 30 wget -qO "$out" "$url"
+    else
+        wget -qO "$out" "$url"
+    fi
+}
+
+valid_catalog_json() {
+    local file="$1" bytes
+    [ -s "$file" ] || return 1
+    bytes="$(wc -c < "$file" | tr -d ' ')"
+    [ "${bytes:-0}" -le "$MAX_CATALOG_JSON" ] || return 1
+    jsonfilter -i "$file" -e '@' >/dev/null 2>&1
+}
+
+catalog() {
+    local main_ok=0 beta_ok=0 main_json='{}' beta_json='{}'
+
+    if fetch_file "${MAIN_BASE}?format=json&data=group" "$TMPROOT/main.json" &&
+       valid_catalog_json "$TMPROOT/main.json"; then
+        main_ok=1
+        main_json="$(cat "$TMPROOT/main.json")"
+    fi
+
+    if fetch_file "${BETA_BASE}?format=json&data=group" "$TMPROOT/beta.json" &&
+       valid_catalog_json "$TMPROOT/beta.json"; then
+        beta_ok=1
+        beta_json="$(cat "$TMPROOT/beta.json")"
+    fi
+
+    [ "$main_ok" = '1' ] || [ "$beta_ok" = '1' ] || {
+        json_init
+        json_add_boolean ok 0
+        json_add_string message 'Не удалось загрузить каталоги OpenCCK.'
+        json_dump
+        return 1
+    }
+
+    json_init
+    json_add_boolean ok 1
+    json_add_boolean main_ok "$main_ok"
+    json_add_boolean beta_ok "$beta_ok"
+    json_add_string main_json "$main_json"
+    json_add_string beta_json "$beta_json"
+    json_dump
+}
+
+valid_sites() {
+    local s
+    for s in $1; do
+        printf '%s' "$s" | grep -Eq '^[A-Za-z0-9._@-]+$' || return 1
+    done
+    return 0
+}
+
+append_chunk() {
+    local base="$1" data="$2" chunk="$3" out="$4" url part s bytes
+    [ -n "$chunk" ] || return 0
+
+    url="${base}?format=text&data=$data"
+    [ "$data" = 'domains' ] && url="${url}&wildcard=1"
+    for s in $chunk; do
+        url="${url}&site=$s"
+    done
+
+    part="$TMPROOT/part.$data.$$.txt"
+    rm -f "$part"
+    if ! fetch_file "$url" "$part"; then
+        rm -f "$part"
+        fail "Не удалось скачать $data из OpenCCK."
+        return 1
+    fi
+
+    if [ -s "$part" ]; then
+        tr -d '\r' < "$part" >> "$out"
+        printf '\n' >> "$out"
+    fi
+    rm -f "$part"
+
+    bytes="$(wc -c < "$out" | tr -d ' ')"
+    [ "${bytes:-0}" -le "$MAX_RESULT_BYTES" ] || {
+        fail 'Выбранный набор больше 1 МиБ. Уменьшите количество сервисов.'
+        return 1
+    }
+}
+
+append_sites() {
+    local base="$1" sites="$2" data="$3" out="$4" chunk='' count=0 s
+    [ -n "$sites" ] || return 0
+    valid_sites "$sites" || {
+        fail 'Каталог содержит недопустимое имя портала.'
+        return 1
+    }
+
+    for s in $sites; do
+        chunk="${chunk:+$chunk }$s"
+        count=$((count+1))
+        if [ "$count" -ge "$CHUNK_SITES" ]; then
+            append_chunk "$base" "$data" "$chunk" "$out" || return 1
+            chunk=''
+            count=0
+        fi
+    done
+    [ -z "$chunk" ] || append_chunk "$base" "$data" "$chunk" "$out"
+}
+
+build() {
+    local id="$1" out="$2" main_sites beta_sites count
+    printf '%s' "$id" | grep -Eq '^r[0-9A-Za-z_-]+$' || {
+        fail 'Некорректный ID правила.'
+        return 1
+    }
+
+    main_sites="$(uci -q get "easyroute.$id.catalog_main_sites" 2>/dev/null || true)"
+    beta_sites="$(uci -q get "easyroute.$id.catalog_beta_sites" 2>/dev/null || true)"
+    [ -n "$main_sites" ] || [ -n "$beta_sites" ] || {
+        fail 'В каталожном правиле не выбраны сервисы.'
+        return 1
+    }
+
+    : > "$out"
+    append_sites "$MAIN_BASE" "$main_sites" domains "$out" || return 1
+    append_sites "$MAIN_BASE" "$main_sites" cidr4 "$out" || return 1
+    append_sites "$BETA_BASE" "$beta_sites" domains "$out" || return 1
+    append_sites "$BETA_BASE" "$beta_sites" cidr4 "$out" || return 1
+
+    # Убираем пустые строки/комментарии и дубликаты, не меняя тип записей.
+    awk '
+      {
+        gsub(/\r/,"");
+        line=$0;
+        gsub(/^[ \t]+|[ \t]+$/,"",line);
+        if(line=="" || line ~ /^#/) next;
+        if(!seen[line]++) print line;
+      }
+    ' "$out" > "$out.clean"
+    mv "$out.clean" "$out"
+
+    [ -s "$out" ] || {
+        fail 'OpenCCK вернул пустой набор для выбранных сервисов.'
+        return 1
+    }
+
+    count="$(wc -l < "$out" | tr -d ' ')"
+    printf 'Собрано %s записей\n' "${count:-0}"
+}
+
+case "${1:-}" in
+    catalog)
+        catalog
+        ;;
+    build)
+        [ -n "${2:-}" ] && [ -n "${3:-}" ] || {
+            fail 'Usage: easyroute-catalog build <rule-id> <output-file>'
+            exit 2
+        }
+        build "$2" "$3"
+        ;;
+    *)
+        fail 'Usage: easyroute-catalog catalog | build <rule-id> <output-file>'
+        exit 2
+        ;;
+esac
