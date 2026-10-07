@@ -184,7 +184,7 @@ save_rule() {
     is_new=0
     if [ -z "$id" ]; then
         is_new=1
-        base="r$(date +%s)_$"
+        base="r$(date +%s)_${PPID:-0}"
         id="$base"
         n=0
         while uci -q get "easyroute.$id" >/dev/null 2>&1; do
