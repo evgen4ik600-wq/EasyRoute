@@ -36,6 +36,11 @@ acquire_lock() {
 
 log() { logger -t easyroute "$*" 2>/dev/null || true; }
 
+sync_auto_vpns() {
+    [ -x /usr/libexec/easyroute-vpn-sync ] || return 0
+    /usr/libexec/easyroute-vpn-sync >/dev/null 2>&1 || true
+}
+
 get_iface() {
     local configured proto detected
     configured="$(uci -q get easyroute.main.interface 2>/dev/null || true)"
@@ -557,10 +562,12 @@ apply_all() {
 case "${1:-}" in
     apply)
         acquire_lock || { echo 'EasyRoute уже применяет сетевые изменения.' >&2; exit 1; }
+        sync_auto_vpns
         apply_all
         ;;
     route)
         acquire_lock || { echo 'EasyRoute уже изменяет маршруты.' >&2; exit 1; }
+        sync_auto_vpns
         route_up
         ;;
     route-down)
