@@ -64,8 +64,12 @@ function serviceSetup(x,ps){
   add.disabled=true;var base='https://iplist.opencck.org/?format=text&site='+encodeURIComponent(x[2]);
   callSave('',x[0]+' '+x[1]+' · домены',true,'','url',base+'&data=domains&wildcard=1',true,'86400',prof.value).then(function(a){
    if(!a.ok)throw new Error(a.message||'Не удалось добавить домены');
-   return callSave('',x[0]+' '+x[1]+' · IP',true,'','url',base+'&data=cidr4',true,'86400',prof.value);
-  }).then(function(b){notify(b);if(b.ok){ui.hideModal();setTimeout(refresh,600);}else add.disabled=false;}).catch(function(e){notify({ok:false,message:e.message});add.disabled=false;});
+   return callSave('',x[0]+' '+x[1]+' · IP',true,'','url',base+'&data=cidr4',true,'86400',prof.value).then(function(b){
+    if(b.ok)notify({ok:true,message:'✅ Сервис добавлен: домены + IP/CIDR.'});
+    else notify({ok:true,message:'✅ Домены добавлены. ℹ️ IP/CIDR-список для этого сервиса сейчас недоступен — используем маршрутизацию по доменам.'});
+    ui.hideModal();setTimeout(refresh,600);
+   });
+  }).catch(function(e){notify({ok:false,message:e.message});add.disabled=false;});
  });
  ui.showModal(x[0]+' '+x[1],[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('div',{class:'cbi-section'},[
   E('h3',{},'Что сделает EasyRoute?'),E('p',{},'🌐 Добавит домены\n📡 Добавит IP-сети\n🔄 Будет обновлять их каждые 24 часа\n🛡️ Направит через выбранный VPN'),
