@@ -13,6 +13,24 @@ NAT_FILE='/usr/share/nftables.d/table-post/90-easyroute-nat.nft'
 MARK='0x66'
 TABLE='166'
 RULE_PRIO='1066'
+LOCKDIR='/tmp/easyroute-engine.lock'
+
+acquire_lock() {
+    if mkdir "$LOCKDIR" 2>/dev/null; then
+        printf '%s\n' "$" > "$LOCKDIR/pid"
+        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+        return 0
+    fi
+    oldpid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && ! kill -0 "$oldpid" 2>/dev/null; then
+        rm -rf "$LOCKDIR"
+        mkdir "$LOCKDIR" 2>/dev/null || return 1
+        printf '%s\n' "$" > "$LOCKDIR/pid"
+        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+        return 0
+    fi
+    return 1
+}
 
 log() { logger -t easyroute "$*" 2>/dev/null || true; }
 
@@ -492,8 +510,17 @@ apply_all() {
 }
 
 case "${1:-}" in
-    apply) apply_all ;;
-    route) route_up ;;
-    route-down) route_down ;;
+    apply)
+        acquire_lock || { echo 'EasyRoute уже применяет сетевые изменения.' >&2; exit 1; }
+        apply_all
+        ;;
+    route)
+        acquire_lock || { echo 'EasyRoute уже изменяет маршруты.' >&2; exit 1; }
+        route_up
+        ;;
+    route-down)
+        acquire_lock || { echo 'EasyRoute уже изменяет маршруты.' >&2; exit 1; }
+        route_down
+        ;;
     *) echo "Usage: $0 apply|route|route-down"; exit 2 ;;
 esac
