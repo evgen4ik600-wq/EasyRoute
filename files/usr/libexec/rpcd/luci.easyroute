@@ -184,10 +184,12 @@ save_rule() {
     is_new=0
     if [ -z "$id" ]; then
         is_new=1
-        id="r$(date +%s)$"
+        base="r$(date +%s)_$"
+        id="$base"
         n=0
         while uci -q get "easyroute.$id" >/dev/null 2>&1; do
-            n=$((n+1)); id="r$(date +%s)${n}"
+            n=$((n+1))
+            id="${base}_${n}"
         done
     fi
     valid_id "$id" || { reply 0 'Некорректный ID'; return; }
