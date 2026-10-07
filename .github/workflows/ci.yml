@@ -50,7 +50,7 @@ jobs:
 
       - name: LuCI JavaScript syntax
         run: |
-          node -e "new Function(require('fs').readFileSync('files/www/luci-static/resources/view/easyroute/routes-v1222.js','utf8'))"
+          node -e "new Function(require('fs').readFileSync('files/www/luci-static/resources/view/easyroute/routes-v1223.js','utf8'))"
 
       - name: Installer references
         run: |
@@ -62,8 +62,8 @@ jobs:
           grep -Fq 'files/usr/libexec/easyroute-catalog' install.sh
           grep -Fq 'files/usr/libexec/easyroute-audit' install.sh
           grep -Fq 'files/usr/libexec/easyroute-vpn-sync' install.sh
-          grep -Fq 'files/www/luci-static/resources/view/easyroute/routes-v1222.js' install.sh
-          grep -Fq '"path": "easyroute/routes-v1222"' files/usr/share/luci/menu.d/luci-app-easyroute.json
+          grep -Fq 'files/www/luci-static/resources/view/easyroute/routes-v1223.js' install.sh
+          grep -Fq '"path": "easyroute/routes-v1223"' files/usr/share/luci/menu.d/luci-app-easyroute.json
           ! grep -Rq 'openwrt-simple-ui\|clientnames/' install.sh easyroute-install.sh files
           ! grep -Rq 'openwrt-easyroute-install.sh' install.sh easyroute-install.sh files
 
@@ -78,7 +78,7 @@ jobs:
           audit = Path('files/usr/libexec/easyroute-audit').read_text()
           vpnsync = Path('files/usr/libexec/easyroute-vpn-sync').read_text()
           rpc = Path('files/usr/libexec/rpcd/luci.easyroute').read_text()
-          ui = Path('files/www/luci-static/resources/view/easyroute/routes-v1222.js').read_text()
+          ui = Path('files/www/luci-static/resources/view/easyroute/routes-v1223.js').read_text()
           hotplug = Path('files/etc/hotplug.d/iface/95-easyroute').read_text()
           installer = Path('install.sh').read_text()
           uninstaller = Path('uninstall.sh').read_text()
@@ -129,7 +129,7 @@ jobs:
               "IPv6 input sanitized": "^[0-9A-Fa-f:]+$" in engine and "b[2]+0<=128" in engine,
               "profile old routes cleanup": "старые маршруты профиля" in rpc and "маршруты удаляемого профиля" in rpc,
               "fwmark bounded": "fwmark должен быть в диапазоне 1..255" in rpc,
-              "cache busted UI": "EasyRoute 1.2.22" in ui,
+              "cache busted UI": "EasyRoute 1.2.23" in ui,
               "UI helpers restored": all(("function "+name+"(") in ui for name in ["notify","bytes","ago","closeBtn","profileSelect","refresh","manualEditor"]),
               "audit redacts AWG secrets": '<redacted>' in audit and 'private_key' in audit and 'preshared_key' in audit,
               "VPN status uses interface state": "handshake_age" in rpc and "интерфейс поднят · нет handshake" in ui,
