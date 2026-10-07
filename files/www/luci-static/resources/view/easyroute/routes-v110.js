@@ -17,6 +17,8 @@ var callUpdate=rpc.declare({object:'luci.easyroute',method:'update_rule',params:
 var callSaveDevice=rpc.declare({object:'luci.easyroute',method:'save_device',params:['id','name','mac','profile','enabled'],expect:{}});
 var callDeleteDevice=rpc.declare({object:'luci.easyroute',method:'delete_device',params:['id'],expect:{}});
 var callDiag=rpc.declare({object:'luci.easyroute',method:'diagnostics',expect:{}});
+var callDnsStatus=rpc.declare({object:'luci.easyroute',method:'dns_status',expect:{}});
+var callDnsApply=rpc.declare({object:'luci.easyroute',method:'dns_apply',params:['enabled','provider'],expect:{}});
 
 var SERVICES=[
  ['📺','YouTube','youtube.com'],['✈️','Telegram','telegram.org'],['🤖','ChatGPT / OpenAI','openai.com'],
@@ -83,13 +85,13 @@ function devicePicker(ps){
  });
 }
 function healthBox(){
- callSelftest().then(function(r){var rows=[['🌍 Интернет',r.internet],['🛡️ VPN / свежий handshake',r.vpn],['🔥 Firewall',r.firewall],['🌐 DNS',r.dns],['🧭 Маршрутизация EasyRoute',r.routing],['🔄 Доступ к источнику списков',r.updater],['⚠️ Нет конфликтов ip rule',!r.conflicts]];ui.showModal('🩺 Проверка EasyRoute',[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('div',{class:'cbi-section'},rows.map(function(x){return E('p',{},[(x[1]?'✅ ':'❌ '),E('strong',{},x[0])]);}))]);});
+ callSelftest().then(function(r){var rows=[['🌍 Интернет',r.internet],['🛡️ VPN / свежий handshake',r.vpn],['🔥 Firewall',r.firewall],['🌐 DNS',r.dns],['🔐 DoT (если включён)',r.dot],['🧭 Маршрутизация EasyRoute',r.routing],['🔄 Доступ к источнику списков',r.updater],['⚠️ Нет конфликтов ip rule',!r.conflicts]];ui.showModal('🩺 Проверка EasyRoute',[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('div',{class:'cbi-section'},rows.map(function(x){return E('p',{},[(x[1]?'✅ ':'❌ '),E('strong',{},x[0])]);}))]);});
 }
 return view.extend({
- load:function(){return Promise.all([callStatus(),callList(),callProfiles(),callDevices(),callSelftest()]);},
+ load:function(){return Promise.all([callStatus(),callList(),callProfiles(),callDevices(),callSelftest(),callDnsStatus()]);},
  render:function(data){
-  var s=data[0]||{},rules=(data[1]||{}).rules||[],ps=(data[2]||{}).profiles||[],devs=(data[3]||{}).devices||[],health=data[4]||{};
-  var title=E('div',{class:'cbi-section'},[E('h2',{},'🚀 EasyRoute 1.1.24'),E('p',{},'VPN и маршрутизация без сложных настроек ✨')]);
+  var s=data[0]||{},rules=(data[1]||{}).rules||[],ps=(data[2]||{}).profiles||[],devs=(data[3]||{}).devices||[],health=data[4]||{},dnsState=data[5]||{};
+  var title=E('div',{class:'cbi-section'},[E('h2',{},'🚀 EasyRoute 1.1.25'),E('p',{},'VPN и маршрутизация без сложных настроек ✨')]);
   var state=E('div',{class:'cbi-section'},[
    E('h3',{},health.all_ok?'🟢 Всё работает':'🟠 Нужна проверка'),
    E('p',{},['🌍 Интернет · ',E('strong',{},health.internet?'доступен':'ошибка')]),
@@ -113,10 +115,31 @@ return view.extend({
   ps.forEach(function(p){vpn.appendChild(E('p',{},[(p.up?'🟢 ':'🔴 '),E('strong',{},p.name),' · '+p.interface,E('span',{style:'opacity:.6'},' · '+(p.up?'работает':'не подключён'))]));});
   vpn.appendChild(E('p',{},'💡 EasyRoute использует обычные системные интерфейсы AmneziaWG и не прячет VPN внутри себя.'));
   vpn.appendChild(E('button',{class:'btn cbi-button',type:'button',click:function(){window.location.href=L.url('admin/network/network');}},'➕ Добавить / импортировать AWG'));
+  var dns=E('div',{class:'cbi-section'},[E('h3',{},'🌐 Защищённый DNS (DoT)')]);
+  var dnsProvider=E('select',{class:'cbi-input-select'},[
+   E('option',{value:'adguard'},'🛡️ AdGuard DNS'),
+   E('option',{value:'cloudflare'},'☁️ Cloudflare DNS'),
+   E('option',{value:'google'},'🌍 Google DNS')
+  ]);
+  dnsProvider.value=dnsState.provider||'adguard';
+  dns.appendChild(E('p',{},dnsState.enabled?
+   ['🟢 Включён · ',E('strong',{},dnsState.provider||'DoT'),dnsState.healthy?' · работает':' · ⚠️ нужна проверка']:
+   ['⚪ Выключен · используется системный DNS']));
+  dns.appendChild(E('p',{},'EasyRoute оставляет dnsmasq перед Stubby, поэтому доменные nftset-маршруты продолжают работать. WAN/PPPoE, IPv6 и DNS-интерфейсов EasyRoute не меняет.'));
+  dns.appendChild(E('p',{},['Провайдер: ',dnsProvider]));
+  var dnsBtn=E('button',{class:'btn cbi-button '+(dnsState.enabled?'cbi-button-remove':'cbi-button-action'),type:'button'},dnsState.enabled?'⏹️ Отключить DoT':'🔐 Включить DoT');
+  dnsBtn.addEventListener('click',function(){
+   dnsBtn.disabled=true;
+   if(!dnsState.enabled && !confirm('EasyRoute установит Stubby при необходимости и переключит только upstream dnsmasq на DoT. Продолжить?')){dnsBtn.disabled=false;return;}
+   callDnsApply(!dnsState.enabled,dnsProvider.value).then(function(r){notify(r);if(r.ok)setTimeout(refresh,700);else dnsBtn.disabled=false;}).catch(function(e){notify({ok:false,message:e.message});dnsBtn.disabled=false;});
+  });
+  dns.appendChild(dnsBtn);
+  dns.appendChild(E('p',{style:'font-size:12px;opacity:.7'},'ℹ️ Если Stubby уже был установлен вручную, EasyRoute откажется перезаписывать его конфигурацию, чтобы избежать конфликта.'));
+
   var devices=E('div',{class:'cbi-section'},[E('h3',{},'📱 Устройства'),E('p',{},'Можно отправить целиком телефон, ТВ или компьютер через VPN.')]);
   devs.forEach(function(d){var del=E('button',{class:'btn cbi-button cbi-button-remove',type:'button'},'🗑️');del.addEventListener('click',function(){callDeleteDevice(d.id).then(function(x){notify(x);if(x.ok)setTimeout(refresh,350);});});devices.appendChild(E('p',{},['📱 ',E('strong',{},d.name||d.mac),' · '+d.mac+' ',del]));});
   devices.appendChild(E('button',{class:'btn cbi-button cbi-button-action',type:'button',click:function(){devicePicker(ps);}},'🔎 Найти устройства автоматически'));
   var adv=E('details',{class:'cbi-section'},[E('summary',{},'⚙️ Для опытных'),E('p',{},'🧭 Домены: '+(s.domain_count||0)+' · 📡 IP/CIDR: '+(s.ip_count||0)+' · 🕒 Последнее применение: '+(s.last_apply||'—')),E('button',{class:'btn cbi-button',type:'button',click:function(){callDiag().then(function(r){ui.showModal('🔧 Диагностика',[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('pre',{style:'white-space:pre-wrap;max-height:65vh;overflow:auto'},JSON.stringify(r,null,2))]);});}},'🔧 Техническая диагностика')]);
-  return E('div',{},[title,state,apps,vpn,devices,adv]);
+  return E('div',{},[title,state,apps,vpn,dns,devices,adv]);
  }
 });
