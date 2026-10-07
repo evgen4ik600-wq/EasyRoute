@@ -32,6 +32,7 @@ jobs:
           dash -n files/usr/libexec/easyroute
           dash -n files/usr/libexec/easyroute-url-update
           dash -n files/usr/libexec/easyroute-dns
+          dash -n files/usr/libexec/easyroute-catalog
           dash -n files/usr/libexec/rpcd/luci.easyroute
           dash -n files/etc/init.d/easyroute
           dash -n files/etc/hotplug.d/iface/95-easyroute
@@ -52,6 +53,7 @@ jobs:
           grep -Fq 'files/usr/libexec/easyroute' install.sh
           grep -Fq 'files/usr/libexec/easyroute-url-update' install.sh
           grep -Fq 'files/usr/libexec/easyroute-dns' install.sh
+          grep -Fq 'files/usr/libexec/easyroute-catalog' install.sh
           grep -Fq 'files/www/luci-static/resources/view/easyroute/routes-v110.js' install.sh
           grep -Fq '"path": "easyroute/routes-v110"' files/usr/share/luci/menu.d/luci-app-easyroute.json
           ! grep -Rq 'openwrt-simple-ui\|clientnames/' install.sh easyroute-install.sh files
@@ -64,6 +66,7 @@ jobs:
           engine = Path('files/usr/libexec/easyroute').read_text()
           updater = Path('files/usr/libexec/easyroute-url-update').read_text()
           dnsman = Path('files/usr/libexec/easyroute-dns').read_text()
+          catalog = Path('files/usr/libexec/easyroute-catalog').read_text()
           rpc = Path('files/usr/libexec/rpcd/luci.easyroute').read_text()
           ui = Path('files/www/luci-static/resources/view/easyroute/routes-v110.js').read_text()
           hotplug = Path('files/etc/hotplug.d/iface/95-easyroute').read_text()
@@ -90,6 +93,15 @@ jobs:
               "dot refuses external stubby": 'Stubby уже установлен вне EasyRoute' in dnsman,
               "dot rpc": 'dns_status()' in rpc and 'dns_apply()' in rpc,
               "dot ui": 'Защищённый DNS (DoT)' in ui,
+              "catalog main endpoint": 'https://iplist.opencck.org/' in catalog,
+              "catalog beta endpoint": 'https://beta.iplist.opencck.org/' in catalog,
+              "catalog metadata transient": '/tmp/easyroute-catalog.$' in catalog and '/etc/easyroute/catalog' not in catalog,
+              "catalog chunking": 'CHUNK_SITES=30' in catalog,
+              "catalog size limit": 'MAX_RESULT_BYTES=1048576' in catalog,
+              "catalog updater": 'source_type' in updater and 'catalog)' in updater,
+              "catalog rpc": 'catalog()' in rpc and 'save_catalog()' in rpc,
+              "catalog ui": 'Каталог OpenCCK' in ui and 'callSaveCatalog' in ui,
+              "catalog edit avoids payload": "if [ \"$source_type\" = 'catalog' ]" in rpc,
               "hotplug never adopts vpn": 'uci set "easyroute.main.interface=' not in hotplug,
           }
           failed = [name for name, ok in checks.items() if not ok]
