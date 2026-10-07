@@ -128,6 +128,24 @@ if [ ! -f "$BACKUP/.created" ]; then
     date > "$BACKUP/.created"
 fi
 
+PREV="$TMP/previous"
+mkdir -p "$PREV"
+for f in $FILES; do
+    dst="/${f#files/}"
+    prev="$PREV/${f#files/}"
+    mkdir -p "$(dirname "$prev")"
+    if [ -e "$dst" ]; then
+        cp -p "$dst" "$prev"
+    else
+        : > "$prev.absent"
+    fi
+done
+if [ -f /etc/config/easyroute ]; then
+    cp -p /etc/config/easyroute "$PREV/easyroute.config"
+else
+    : > "$PREV/easyroute.config.absent"
+fi
+
 for f in $FILES; do
     dst="/${f#files/}"
     mkdir -p "$(dirname "$dst")"
@@ -149,6 +167,34 @@ else
         uci commit easyroute
     fi
 fi
+
+if ! out="$(/usr/libexec/easyroute apply 2>&1)"; then
+    printf '%s\n' "$out" >&2
+    for f in $FILES; do
+        dst="/${f#files/}"
+        prev="$PREV/${f#files/}"
+        if [ -f "$prev.absent" ]; then
+            rm -f "$dst"
+        elif [ -f "$prev" ]; then
+            cp -p "$prev" "$dst"
+        fi
+    done
+    if [ -f "$PREV/easyroute.config.absent" ]; then
+        rm -f /etc/config/easyroute
+    elif [ -f "$PREV/easyroute.config" ]; then
+        cp -p "$PREV/easyroute.config" /etc/config/easyroute
+    fi
+    /etc/init.d/rpcd restart >/dev/null 2>&1 || true
+    if [ -x /usr/libexec/easyroute ]; then
+        /usr/libexec/easyroute apply >/dev/null 2>&1 || true
+    fi
+    fail 'Обновление EasyRoute отменено: предыдущая версия восстановлена.'
+fi
+
+printf '%s\n' "$VERSION" > /etc/easyroute/version
+rm -f /www/luci-static/resources/view/easyroute/routes-v110.js \
+      /www/luci-static/resources/view/easyroute/routes-v120.js \
+      /www/luci-static/resources/view/easyroute/routes-v126.js 2>/dev/null || true
 
 /etc/init.d/easyroute enable
 
@@ -174,14 +220,6 @@ rm -f /tmp/easyroute-cron.$$
 
 /etc/init.d/rpcd restart >/dev/null 2>&1 || true
 rm -rf /tmp/luci-indexcache /tmp/luci-modulecache /tmp/luci-*cache* 2>/dev/null || true
-
-if ! out="$(/usr/libexec/easyroute apply 2>&1)"; then
-    printf '%s\n' "$out" >&2
-    fail 'Файлы установлены, но первичная проверка/применение не прошла.'
-fi
-
-printf '%s\n' "$VERSION" > /etc/easyroute/version
-rm -f /www/luci-static/resources/view/easyroute/routes-v110.js       /www/luci-static/resources/view/easyroute/routes-v120.js       /www/luci-static/resources/view/easyroute/routes-v126.js 2>/dev/null || true
 
 FREE2="$(df -k /overlay 2>/dev/null | awk 'NR==2{print $4}')"
 [ -n "$FREE2" ] || FREE2="$(df -k / 2>/dev/null | awk 'NR==2{print $4}')"
