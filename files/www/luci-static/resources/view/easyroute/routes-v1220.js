@@ -223,11 +223,14 @@ return view.extend({
   ]);
   dnsProvider.value=dnsState.provider||'adguard';
   dns.appendChild(E('p',{},dnsState.enabled?
-   ['🟢 Включён · ',E('strong',{},dnsState.provider||'DoT'),dnsState.healthy?' · работает':' · ⚠️ нужна проверка']:
-   ['⚪ Выключен · используется системный DNS']));
+   ['🟢 EasyRoute DoT включён · ',E('strong',{},dnsState.provider||'DoT'),dnsState.healthy?' · работает':' · ⚠️ нужна проверка']:
+   (dnsState.external?
+    ['🟢 Уже используется внешний локальный защищённый DNS · EasyRoute его не трогает']:
+    ['⚪ EasyRoute DoT выключен · используется системный DNS'])));
   dns.appendChild(E('p',{},'EasyRoute оставляет dnsmasq перед Stubby, поэтому доменные nftset-маршруты продолжают работать. WAN/PPPoE, IPv6 и DNS-интерфейсов EasyRoute не меняет.'));
   dns.appendChild(E('p',{},['Провайдер: ',dnsProvider]));
   var dnsBtn=E('button',{class:'btn cbi-button '+(dnsState.enabled?'cbi-button-remove':'cbi-button-action'),type:'button'},dnsState.enabled?'⏹️ Отключить DoT':'🔐 Включить DoT');
+  if(dnsState.external&&!dnsState.enabled){dnsBtn.disabled=true;dnsBtn.title='Уже обнаружен другой локальный защищённый DNS';}
   dnsBtn.addEventListener('click',function(){
    dnsBtn.disabled=true;
    if(!dnsState.enabled && !confirm('EasyRoute установит Stubby при необходимости и переключит только upstream dnsmasq на DoT. Продолжить?')){dnsBtn.disabled=false;return;}
