@@ -83,17 +83,18 @@ function devicePicker(ps){
  });
 }
 function healthBox(){
- callSelftest().then(function(r){var rows=[['🌍 Интернет',r.internet],['🛡️ VPN',r.vpn],['🔥 Firewall',r.firewall],['🌐 DNS',r.dns],['🧭 Маршрутизация',r.routing],['🔄 Автообновление',r.updater]];ui.showModal('🩺 Проверка EasyRoute',[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('div',{class:'cbi-section'},rows.map(function(x){return E('p',{},[(x[1]?'✅ ':'❌ '),E('strong',{},x[0])]);}))]);});
+ callSelftest().then(function(r){var rows=[['🌍 Интернет',r.internet],['🛡️ VPN / свежий handshake',r.vpn],['🔥 Firewall',r.firewall],['🌐 DNS',r.dns],['🧭 Маршрутизация EasyRoute',r.routing],['🔄 Доступ к источнику списков',r.updater],['⚠️ Нет конфликтов ip rule',!r.conflicts]];ui.showModal('🩺 Проверка EasyRoute',[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('div',{class:'cbi-section'},rows.map(function(x){return E('p',{},[(x[1]?'✅ ':'❌ '),E('strong',{},x[0])]);}))]);});
 }
 return view.extend({
- load:function(){return Promise.all([callStatus(),callList(),callProfiles(),callDevices()]);},
+ load:function(){return Promise.all([callStatus(),callList(),callProfiles(),callDevices(),callSelftest()]);},
  render:function(data){
-  var s=data[0]||{},rules=(data[1]||{}).rules||[],ps=(data[2]||{}).profiles||[],devs=(data[3]||{}).devices||[];
-  var title=E('div',{class:'cbi-section'},[E('h2',{},'🚀 EasyRoute 1.1'),E('p',{},'VPN и маршрутизация без сложных настроек ✨')]);
+  var s=data[0]||{},rules=(data[1]||{}).rules||[],ps=(data[2]||{}).profiles||[],devs=(data[3]||{}).devices||[],health=data[4]||{};
+  var title=E('div',{class:'cbi-section'},[E('h2',{},'🚀 EasyRoute 1.1.24'),E('p',{},'VPN и маршрутизация без сложных настроек ✨')]);
   var state=E('div',{class:'cbi-section'},[
-   E('h3',{},s.vpn_up?'🟢 Всё работает':'🟠 Нужна проверка'),
-   E('p',{},['🌍 Интернет · ',E('strong',{},'OpenWrt')]),
-   E('p',{},['🛡️ VPN · ',E('strong',{},s.interface||'AWG'),' · ',s.vpn_up?'подключён':'не подключён',' · ',ago(s.handshake_age)]),
+   E('h3',{},health.all_ok?'🟢 Всё работает':'🟠 Нужна проверка'),
+   E('p',{},['🌍 Интернет · ',E('strong',{},health.internet?'доступен':'ошибка')]),
+   E('p',{},['🛡️ VPN · ',E('strong',{},s.interface||'AWG'),' · ',health.vpn?'работает':'нет свежего handshake',' · ',ago(s.handshake_age)]),
+   E('p',{},['🧭 Маршруты · ',health.routing?'✅':'❌',' · 🔄 списки · ',health.updater?'✅':'❌',health.conflicts?' · ⚠️ конфликт ip rule':'']),
    E('p',{},'📊 ↓ '+bytes(s.rx_bytes)+' · ↑ '+bytes(s.tx_bytes)+' · 💾 свободно '+(Number(s.overlay_free_kb||0)/1024).toFixed(1)+' МБ'),
    E('button',{class:'btn cbi-button',type:'button',click:healthBox},'🩺 Проверить всё')
   ]);
