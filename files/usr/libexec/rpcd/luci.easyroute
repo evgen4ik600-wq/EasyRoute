@@ -146,13 +146,18 @@ get_rule() {
     json_get_var id id
     valid_id "$id" || { reply 0 'Некорректный ID'; return; }
     [ "$(uci -q get "easyroute.$id" 2>/dev/null || true)" = 'rule' ] || { reply 0 'Список не найден'; return; }
+    source_type="$(uci -q get "easyroute.$id.source_type" 2>/dev/null || echo manual)"
     json_init
     json_add_boolean ok 1
     json_add_string id "$id"
     json_add_string name "$(uci -q get "easyroute.$id.name" 2>/dev/null || echo "$id")"
     json_add_boolean enabled "$(uci -q get "easyroute.$id.enabled" 2>/dev/null || echo 1)"
-    json_add_string content "$(cat "$LISTDIR/$id.txt" 2>/dev/null || true)"
-    json_add_string source_type "$(uci -q get "easyroute.$id.source_type" 2>/dev/null || echo manual)"
+    if [ "$source_type" = 'catalog' ]; then
+        json_add_string content ''
+    else
+        json_add_string content "$(cat "$LISTDIR/$id.txt" 2>/dev/null || true)"
+    fi
+    json_add_string source_type "$source_type"
     json_add_string source_url "$(uci -q get "easyroute.$id.source_url" 2>/dev/null || true)"
     json_add_string catalog_main_sites "$(uci -q get "easyroute.$id.catalog_main_sites" 2>/dev/null || true)"
     json_add_string catalog_beta_sites "$(uci -q get "easyroute.$id.catalog_beta_sites" 2>/dev/null || true)"
