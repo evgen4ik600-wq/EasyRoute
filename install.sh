@@ -100,7 +100,7 @@ fi
 [ -n "$IFACE" ] || IFACE="${EXISTING:-AWG}"
 
 rm -rf "$TMP"; mkdir -p "$TMP"
-FILES='files/usr/libexec/easyroute files/usr/libexec/easyroute-url-update files/usr/libexec/easyroute-dns files/usr/libexec/easyroute-catalog files/usr/libexec/rpcd/luci.easyroute files/etc/init.d/easyroute files/etc/hotplug.d/iface/95-easyroute files/usr/share/luci/menu.d/luci-app-easyroute.json files/usr/share/rpcd/acl.d/luci-app-easyroute.json files/www/luci-static/resources/view/easyroute/routes-v126.js'
+FILES='files/usr/libexec/easyroute files/usr/libexec/easyroute-url-update files/usr/libexec/easyroute-dns files/usr/libexec/easyroute-catalog files/usr/libexec/rpcd/luci.easyroute files/etc/init.d/easyroute files/etc/hotplug.d/iface/95-easyroute files/usr/share/luci/menu.d/luci-app-easyroute.json files/usr/share/rpcd/acl.d/luci-app-easyroute.json files/www/luci-static/resources/view/easyroute/routes-v1216.js'
 for f in $FILES; do
     mkdir -p "$TMP/$(dirname "$f")"
     wget -qO "$TMP/$f" "$REPO_BASE/$f" || fail "Не удалось скачать $f"
