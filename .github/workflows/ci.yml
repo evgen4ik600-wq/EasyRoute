@@ -52,7 +52,8 @@ jobs:
           grep -Fq 'files/usr/libexec/easyroute-url-update' install.sh
           grep -Fq 'files/www/luci-static/resources/view/easyroute/routes-v110.js' install.sh
           grep -Fq '"path": "easyroute/routes-v110"' files/usr/share/luci/menu.d/luci-app-easyroute.json
-          ! grep -Rq 'openwrt-simple-ui\|clientnames/\|openwrt-easyroute-install.sh' install.sh easyroute-install.sh .github/workflows/ci.yml
+          ! grep -Rq 'openwrt-simple-ui\|clientnames/' install.sh easyroute-install.sh files
+          ! grep -Rq 'openwrt-easyroute-install.sh' install.sh easyroute-install.sh files
 
       - name: EasyRoute invariants
         run: |
@@ -73,7 +74,9 @@ jobs:
               "url attempt timestamp": '$id.attempt' in updater,
               "url rollback": 'previous list restored' in updater,
               "transactional rule edit": 'Изменения отменены' in rpc,
-              "transactional delete": 'Удаление отменено' in rpc,
+              "transactional rule delete": 'Удаление отменено' in rpc,
+              "transactional device change": 'Изменение устройства отменено' in rpc,
+              "transactional profile change": 'Изменения VPN-профиля отменены' in rpc,
               "real updater selftest": 'iplist.opencck.org' in rpc,
               "specific routing selftest": '1066+n' in rpc and 'fwmark $m/0xff' in rpc,
               "health uses all_ok": 'health.all_ok' in ui,
