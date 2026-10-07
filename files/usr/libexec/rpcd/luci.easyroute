@@ -445,8 +445,13 @@ save_profile() {
         }
     done
 
-    cfgbak="/tmp/easyroute-profile.$id.$$"
+    cfgbak="/tmp/easyroute-profile.$id.$"
     cp -p /etc/config/easyroute "$cfgbak"
+    if ! out="$(/usr/libexec/easyroute route-down 2>&1)"; then
+        rm -f "$cfgbak"
+        reply 0 "Не удалось безопасно очистить старые маршруты профиля: $out"
+        return
+    fi
 
     uci set "easyroute.$id=vpn"
     uci set "easyroute.$id.name=$name"
@@ -489,8 +494,13 @@ delete_profile() {
         }
     done
 
-    cfgbak="/tmp/easyroute-profile-delete.$id.$$"
+    cfgbak="/tmp/easyroute-profile-delete.$id.$"
     cp -p /etc/config/easyroute "$cfgbak"
+    if ! out="$(/usr/libexec/easyroute route-down 2>&1)"; then
+        rm -f "$cfgbak"
+        reply 0 "Не удалось безопасно очистить маршруты удаляемого профиля: $out"
+        return
+    fi
 
     uci -q delete "easyroute.$id" 2>/dev/null || true
     if [ "$(uci -q get easyroute.main.profile 2>/dev/null || true)" = "$id" ]; then
