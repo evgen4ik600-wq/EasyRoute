@@ -1,6 +1,7 @@
 #!/bin/sh
-set -u
 
+# jshn.sh intentionally uses unset internal variables (for example JSON_PREFIX).
+# Do not enable `set -u` in this helper: BusyBox ash would abort while sourcing jshn.
 . /usr/share/libubox/jshn.sh
 
 MAIN_BASE='https://iplist.opencck.org/'
