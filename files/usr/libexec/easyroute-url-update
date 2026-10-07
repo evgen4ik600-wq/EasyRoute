@@ -13,7 +13,7 @@ LOCKDIR='/tmp/easyroute-url-update.lock'
 
 acquire_lock() {
     if mkdir "$LOCKDIR" 2>/dev/null; then
-        printf '%s\n' "$" > "$LOCKDIR/pid"
+        printf '%s\n' "$$" > "$LOCKDIR/pid"
         trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
         return 0
     fi
@@ -21,7 +21,7 @@ acquire_lock() {
     if [ -n "$oldpid" ] && ! kill -0 "$oldpid" 2>/dev/null; then
         rm -rf "$LOCKDIR"
         mkdir "$LOCKDIR" 2>/dev/null || return 1
-        printf '%s\n' "$" > "$LOCKDIR/pid"
+        printf '%s\n' "$$" > "$LOCKDIR/pid"
         trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
         return 0
     fi
@@ -148,7 +148,7 @@ update_one_raw() {
 
     mkdir -p "$LISTDIR" "$RUNDIR"
     file="$LISTDIR/$id.txt"
-    tmp="/tmp/easyroute-url.$id.$"
+    tmp="/tmp/easyroute-url.$id.$$"
 
     case "$source_type" in
         url)
