@@ -110,10 +110,12 @@ profile_for_rule() {
 route_down() {
     local id n m t
     # Удаляем только правила EasyRoute с ожидаемыми mark/table.
-    while ip rule del priority "$RULE_PRIO" fwmark "$MARK/0xff" lookup "$TABLE" 2>/dev/null; do :; done
-    while ip -6 rule del priority "$RULE_PRIO" fwmark "$MARK/0xff" lookup "$TABLE" 2>/dev/null; do :; done
-    ip route flush table "$TABLE" 2>/dev/null || true
-    ip -6 route flush table "$TABLE" 2>/dev/null || true
+    if [ -z "$(vpn_ids)" ]; then
+        while ip rule del priority "$RULE_PRIO" fwmark "$MARK/0xff" lookup "$TABLE" 2>/dev/null; do :; done
+        while ip -6 rule del priority "$RULE_PRIO" fwmark "$MARK/0xff" lookup "$TABLE" 2>/dev/null; do :; done
+        ip route flush table "$TABLE" 2>/dev/null || true
+        ip -6 route flush table "$TABLE" 2>/dev/null || true
+    fi
     for id in $(vpn_ids); do
         n="$(profile_num "$id")"
         m="$(profile_field "$id" mark)"
