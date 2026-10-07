@@ -1,0 +1,153 @@
+#!/bin/sh
+# Discover OpenWrt AmneziaWG interfaces and expose them to EasyRoute as
+# managed VPN profiles. Existing/manual EasyRoute VPN profiles are preserved.
+
+LOCKDIR='/tmp/easyroute-vpn-sync.lock'
+
+acquire_lock() {
+    if mkdir "$LOCKDIR" 2>/dev/null; then
+        printf '%s\n' "$$" > "$LOCKDIR/pid"
+        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+        return 0
+    fi
+    oldpid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+        exit 0
+    fi
+    rm -rf "$LOCKDIR"
+    mkdir "$LOCKDIR" 2>/dev/null || exit 0
+    printf '%s\n' "$$" > "$LOCKDIR/pid"
+    trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+}
+
+awg_ifaces() {
+    uci show network 2>/dev/null |
+        sed -n "s/^network\.\([^.=]*\)\.proto='amneziawg'$/\1/p"
+}
+
+vpn_ids() {
+    uci show easyroute 2>/dev/null |
+        sed -n "s/^easyroute\.\([^.=]*\)=vpn$/\1/p"
+}
+
+safe_id() {
+    printf '%s' "$1" | sed 's/[^0-9A-Za-z_-]/_/g'
+}
+
+profile_for_iface() {
+    wanted="$1"
+    for id in $(vpn_ids); do
+        [ "$(uci -q get "easyroute.$id.interface" 2>/dev/null || true)" = "$wanted" ] && {
+            printf '%s\n' "$id"
+            return 0
+        }
+    done
+    return 1
+}
+
+pair_used() {
+    mark="$1"; table="$2"; skip="${3:-}"
+    for id in $(vpn_ids); do
+        [ -n "$skip" ] && [ "$id" = "$skip" ] && continue
+        [ "$(uci -q get "easyroute.$id.mark" 2>/dev/null || true)" = "$mark" ] && return 0
+        [ "$(uci -q get "easyroute.$id.table" 2>/dev/null || true)" = "$table" ] && return 0
+    done
+    return 1
+}
+
+allocate_pair() {
+    n=0
+    while [ "$n" -lt 87 ]; do
+        mark_dec=$((102+n))
+        table=$((166+n))
+        [ "$mark_dec" -le 255 ] || break
+        [ "$table" -le 252 ] || break
+        mark="$(printf '0x%x' "$mark_dec")"
+        if ! pair_used "$mark" "$table"; then
+            printf '%s %s\n' "$mark" "$table"
+            return 0
+        fi
+        n=$((n+1))
+    done
+    return 1
+}
+
+acquire_lock
+[ -f /etc/config/easyroute ] || exit 0
+
+changed=0
+ifaces="$(awg_ifaces)"
+
+for id in $(vpn_ids); do
+    [ "$(uci -q get "easyroute.$id.auto_discovered" 2>/dev/null || true)" = '1' ] || continue
+    [ "$(uci -q get "easyroute.$id.present" 2>/dev/null || echo 1)" = '0' ] || {
+        uci set "easyroute.$id.present=0"
+        changed=1
+    }
+done
+
+first_profile=''
+first_iface=''
+for iface in $ifaces; do
+    [ -n "$first_iface" ] || first_iface="$iface"
+
+    id="$(profile_for_iface "$iface" 2>/dev/null || true)"
+    if [ -n "$id" ]; then
+        [ -n "$first_profile" ] || first_profile="$id"
+        if [ "$(uci -q get "easyroute.$id.auto_discovered" 2>/dev/null || true)" = '1' ]; then
+            [ "$(uci -q get "easyroute.$id.present" 2>/dev/null || true)" = '1' ] || {
+                uci set "easyroute.$id.present=1"; changed=1;
+            }
+            [ "$(uci -q get "easyroute.$id.enabled" 2>/dev/null || true)" = '1' ] || {
+                uci set "easyroute.$id.enabled=1"; changed=1;
+            }
+        fi
+        continue
+    fi
+
+    base="vauto_$(safe_id "$iface")"
+    id="$base"
+    n=1
+    while uci -q get "easyroute.$id" >/dev/null 2>&1; do
+        id="${base}_$n"
+        n=$((n+1))
+    done
+
+    pair="$(allocate_pair 2>/dev/null || true)"
+    [ -n "$pair" ] || {
+        logger -t easyroute "Не удалось выделить mark/table для $iface" 2>/dev/null || true
+        continue
+    }
+    mark="${pair%% *}"
+    table="${pair#* }"
+
+    uci set "easyroute.$id=vpn"
+    uci set "easyroute.$id.name=$iface"
+    uci set "easyroute.$id.interface=$iface"
+    uci set "easyroute.$id.mark=$mark"
+    uci set "easyroute.$id.table=$table"
+    uci set "easyroute.$id.enabled=1"
+    uci set "easyroute.$id.auto_discovered=1"
+    uci set "easyroute.$id.present=1"
+    changed=1
+    [ -n "$first_profile" ] || first_profile="$id"
+done
+
+if [ -n "$first_iface" ]; then
+    current_iface="$(uci -q get easyroute.main.interface 2>/dev/null || true)"
+    current_proto="$(uci -q get "network.$current_iface.proto" 2>/dev/null || true)"
+    if [ -z "$current_iface" ] || [ "$current_proto" != 'amneziawg' ]; then
+        uci set "easyroute.main.interface=$first_iface"
+        changed=1
+    fi
+fi
+
+current_default="$(uci -q get easyroute.main.profile 2>/dev/null || true)"
+if [ -n "$first_profile" ] &&
+   { [ -z "$current_default" ] || [ "$(uci -q get "easyroute.$current_default" 2>/dev/null || true)" != 'vpn' ]; }; then
+    uci set "easyroute.main.profile=$first_profile"
+    changed=1
+fi
+
+[ "$changed" = '1' ] && uci commit easyroute
+exit 0
