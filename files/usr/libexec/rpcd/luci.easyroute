@@ -15,13 +15,7 @@ reply() {
     json_dump
 }
 
-valid_id() { printf '%s' "$1" | grep -Eq '^[rvd][0-9A-Za-z_-]+$'; }
-
-sync_auto_vpns() {
-    [ -x /usr/libexec/easyroute-vpn-sync ] || return 0
-    /usr/libexec/easyroute-vpn-sync >/dev/null 2>&1 || true
-}
-
+valid_id() { printf '%s' "$1" | grep -Eq '^[rvd][0-9A-Za-z_-]+
 rule_ids() {
     uci show easyroute 2>/dev/null | sed -n "s/^easyroute\.\([^.=]*\)=rule$/\1/p"
 }
@@ -418,7 +412,9 @@ profiles() {
             json_add_int table "$(uci -q get "easyroute.$id.table" 2>/dev/null || echo 166)"
             json_add_boolean enabled "$(uci -q get "easyroute.$id.enabled" 2>/dev/null || echo 1)"
             present="$(uci -q get "easyroute.$id.present" 2>/dev/null || true)"
-            [ -n "$present" ] || { [ "$(uci -q get "network.$iface.proto" 2>/dev/null || true)" = 'amneziawg' ] && present=1 || present=0; }
+            if [ -z "$present" ]; then
+                [ "$(uci -q get "network.$iface.proto" 2>/dev/null || true)" = 'amneziawg' ] && present=1 || present=0
+            fi
             json_add_boolean present "$present"
             json_add_boolean auto_discovered "$(uci -q get "easyroute.$id.auto_discovered" 2>/dev/null || echo 0)"
             json_add_boolean up "$up"
