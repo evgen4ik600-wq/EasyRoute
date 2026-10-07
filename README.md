@@ -26,6 +26,7 @@ EasyRoute прячет эту сложность за понятным LuCI-ин
 - 📱 обнаружение устройств в локальной сети;
 - 🟢 включение/выключение маршрутов одним переключателем;
 - 🩺 самодиагностика Internet/VPN/firewall/DNS/routing;
+- 🔐 опциональный DNS-over-TLS через Stubby с AdGuard/Cloudflare/Google без отключения IPv6 и без переписывания WAN DNS;
 - 🔥 проверка firewall-конфигурации перед применением;
 - ↩️ rollback при ошибке;
 - ⚙️ технические параметры спрятаны от обычного пользователя.
@@ -37,6 +38,16 @@ EasyRoute прячет эту сложность за понятным LuCI-ин
 📺 YouTube · ✈️ Telegram · 🤖 ChatGPT/OpenAI · 📸 Instagram · 🎮 Discord · 🎵 TikTok · 🎬 Twitch · 🎧 Spotify · 🧠 Claude · 👥 Facebook.
 
 Сетевые списки сейчас получаются из OpenCCK.
+
+## 🌐 Защищённый DNS
+
+EasyRoute 1.1.25 умеет по желанию включить DNS-over-TLS через Stubby.
+
+Схема:
+
+    Клиент → dnsmasq → Stubby :5453 → DoT :853 → выбранный DNS
+
+Важно: dnsmasq остаётся перед Stubby, поэтому доменная маршрутизация через nftset продолжает работать. EasyRoute не меняет WAN/PPPoE DNS-параметры и не отключает IPv6. Если Stubby уже настроен вручную вне EasyRoute, автоматическая настройка блокируется во избежание конфликта.
 
 ## 🧠 Архитектура
 
