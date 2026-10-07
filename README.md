@@ -74,7 +74,7 @@ EasyRoute **не реализует собственный VPN-протокол*
 
 Подключитесь к OpenWrt по SSH под root:
 
-    wget -qO- "https://raw.githubusercontent.com/evgen4ik600-wq/test/main/install.sh?$(date +%s)" | sh
+    wget -qO- "https://raw.githubusercontent.com/evgen4ik600-wq/EasyRoute/main/install.sh?$(date +%s)" | sh
 
 После установки откройте:
 
