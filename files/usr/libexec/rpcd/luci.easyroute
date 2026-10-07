@@ -202,8 +202,8 @@ save_rule() {
             *) reply 0 'URL должен начинаться с http:// или https://'; return ;;
         esac
 
-        cfgbak="/tmp/easyroute-config.$id.$"
-        listbak="/tmp/easyroute-list.$id.$"
+        cfgbak="/tmp/easyroute-config.$id.$$"
+        listbak="/tmp/easyroute-list.$id.$$"
         cp -p /etc/config/easyroute "$cfgbak" 2>/dev/null || true
         had_list=0
         if [ -f "$LISTDIR/$id.txt" ]; then cp -p "$LISTDIR/$id.txt" "$listbak"; had_list=1; fi
@@ -253,8 +253,8 @@ save_rule() {
     [ $((free_kb-need_kb)) -ge "$RESERVE_KB" ] || { reply 0 'Недостаточно flash. EasyRoute оставляет минимум 1 МБ свободным.'; return; }
 
     mkdir -p "$LISTDIR"
-    cfgbak="/tmp/easyroute-config.$id.$"
-    listbak="/tmp/easyroute-list.$id.$"
+    cfgbak="/tmp/easyroute-config.$id.$$"
+    listbak="/tmp/easyroute-list.$id.$$"
     cp -p /etc/config/easyroute "$cfgbak" 2>/dev/null || true
     had_list=0
     if [ -f "$LISTDIR/$id.txt" ]; then cp -p "$LISTDIR/$id.txt" "$listbak"; had_list=1; fi
@@ -288,8 +288,8 @@ delete_rule() {
     json_load "$1"; json_get_var id id
     valid_id "$id" || { reply 0 'Некорректный ID'; return; }
     [ "$(uci -q get "easyroute.$id" 2>/dev/null || true)" = 'rule' ] || { reply 0 'Правило не найдено'; return; }
-    cfgbak="/tmp/easyroute-delete-config.$id.$"
-    listbak="/tmp/easyroute-delete-list.$id.$"
+    cfgbak="/tmp/easyroute-delete-config.$id.$$"
+    listbak="/tmp/easyroute-delete-list.$id.$$"
     cp -p /etc/config/easyroute "$cfgbak"
     had_list=0
     if [ -f "$LISTDIR/$id.txt" ]; then cp -p "$LISTDIR/$id.txt" "$listbak"; had_list=1; fi
@@ -326,7 +326,7 @@ save_settings() {
         reply 0 'Выбранный VPN-профиль не существует'
         return
     fi
-    cfgbak="/tmp/easyroute-settings.$"
+    cfgbak="/tmp/easyroute-settings.$$"
     cp -p /etc/config/easyroute "$cfgbak"
     uci set easyroute.main.fallback="$fallback"
     if [ -n "$default_profile" ] && [ "$default_profile" != '__default' ]; then
@@ -514,10 +514,87 @@ devices() {
 }
 
 save_device() {
-    json_load "$1"; json_get_var id id; json_get_var name name; json_get_var mac mac; json_get_var profile profile; json_get_var enabled enabled
+    json_load "$1"
+    json_get_var id id
+    json_get_var name name
+    json_get_var mac mac
+    json_get_var profile profile
+    json_get_var enabled enabled
+
     name="$(printf '%s' "$name" | tr '\r\n' ' ' | cut -c1-80)"
     mac="$(printf '%s' "$mac" | tr '[:lower:]' '[:upper:]' | tr -d '\r\n')"
-    printf '%s' "$mac" | grep -Eq '^[0-9A-F]{2}(:[0-9A-F]{2}){5}
+    printf '%s' "$mac" | grep -Eq '^[0-9A-F]{2}(:[0-9A-F]{2}){5}$' || {
+        reply 0 'Некорректный MAC'
+        return
+    }
+
+    if [ -n "$profile" ] && [ "$profile" != '__default' ] &&
+       [ "$(uci -q get "easyroute.$profile" 2>/dev/null || true)" != 'vpn' ]; then
+        reply 0 'VPN-профиль не существует'
+        return
+    fi
+
+    if [ -z "$id" ]; then
+        base="d$(date +%s)_${PPID:-0}"
+        id="$base"
+        n=0
+        while uci -q get "easyroute.$id" >/dev/null 2>&1; do
+            n=$((n+1))
+            id="${base}_${n}"
+        done
+    fi
+    valid_id "$id" || { reply 0 'Некорректный ID'; return; }
+    [ "$enabled" = 0 ] && enabled=0 || enabled=1
+
+    cfgbak="/tmp/easyroute-device.$id.$$"
+    cp -p /etc/config/easyroute "$cfgbak"
+
+    uci set "easyroute.$id=device"
+    uci set "easyroute.$id.name=$name"
+    uci set "easyroute.$id.mac=$mac"
+    if [ -n "$profile" ] && [ "$profile" != '__default' ]; then
+        uci set "easyroute.$id.profile=$profile"
+    else
+        uci -q delete "easyroute.$id.profile"
+    fi
+    uci set "easyroute.$id.enabled=$enabled"
+    uci commit easyroute
+
+    if out="$(/usr/libexec/easyroute apply 2>&1)"; then
+        rm -f "$cfgbak"
+        reply 1 'Устройство сохранено и применено'
+    else
+        cp -p "$cfgbak" /etc/config/easyroute
+        rm -f "$cfgbak"
+        /usr/libexec/easyroute apply >/dev/null 2>&1 || true
+        reply 0 "Изменение устройства отменено: $out"
+    fi
+}
+
+delete_device() {
+    json_load "$1"
+    json_get_var id id
+    valid_id "$id" || { reply 0 'Некорректный ID'; return; }
+    [ "$(uci -q get "easyroute.$id" 2>/dev/null || true)" = 'device' ] || {
+        reply 0 'Устройство не найдено'
+        return
+    }
+
+    cfgbak="/tmp/easyroute-device-delete.$id.$$"
+    cp -p /etc/config/easyroute "$cfgbak"
+    uci -q delete "easyroute.$id" 2>/dev/null || true
+    uci commit easyroute
+
+    if out="$(/usr/libexec/easyroute apply 2>&1)"; then
+        rm -f "$cfgbak"
+        reply 1 'Устройство удалено'
+    else
+        cp -p "$cfgbak" /etc/config/easyroute
+        rm -f "$cfgbak"
+        /usr/libexec/easyroute apply >/dev/null 2>&1 || true
+        reply 0 "Удаление устройства отменено: $out"
+    fi
+}
 
 test_route() {
     json_load "$1"; json_get_var host host; json_get_var profile profile
@@ -576,7 +653,7 @@ discover_devices() {
 selftest() {
     iface="$(detect_iface)"
     internet=0; vpn=0; firewall=0; dns=0; routing=0; updater=0; conflicts=0
-    tmp="/tmp/easyroute-selftest.$"
+    tmp="/tmp/easyroute-selftest.$$"
 
     nslookup openwrt.org 127.0.0.1 >/dev/null 2>&1 && dns=1
     wget -qO /dev/null --timeout=10 'https://openwrt.org/' >/dev/null 2>&1 && internet=1
@@ -851,7 +928,7 @@ discover_devices() {
 selftest() {
     iface="$(detect_iface)"
     internet=0; vpn=0; firewall=0; dns=0; routing=0; updater=0; conflicts=0
-    tmp="/tmp/easyroute-selftest.$"
+    tmp="/tmp/easyroute-selftest.$$"
 
     nslookup openwrt.org 127.0.0.1 >/dev/null 2>&1 && dns=1
     wget -qO /dev/null --timeout=10 'https://openwrt.org/' >/dev/null 2>&1 && internet=1
