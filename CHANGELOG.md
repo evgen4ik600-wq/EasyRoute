@@ -1,5 +1,23 @@
 # Changelog
 
+## EasyRoute 1.1.25
+
+Добавлен **опциональный DNS-over-TLS** без вмешательства в WAN/PPPoE/IPv6:
+
+- dnsmasq остаётся главным DNS для клиентов, поэтому EasyRoute nftset продолжает видеть доменные ответы;
+- Stubby слушает только localhost:5453 и используется как upstream для dnsmasq;
+- доступны AdGuard, Cloudflare и Google DoT;
+- DNS провайдера игнорируется на уровне dnsmasq через `noresolv=1`, без изменения `peerdns` у WAN;
+- существующие split-DNS правила dnsmasq сохраняются;
+- если Stubby уже настроен вне EasyRoute, EasyRoute отказывается перезаписывать его конфигурацию;
+- перед изменениями сохраняются прежние DNS-параметры;
+- при ошибке запуска Stubby, dnsmasq или DNS-проверки выполняется rollback;
+- при удалении EasyRoute прежний DNS сначала восстанавливается;
+- IPv6 не отключается и WAN/WAN6 не переписываются;
+- Stubby устанавливается только при ручном включении DoT, а не при обычной установке EasyRoute.
+
+Проверенный payload: `557e7745c6ff7d7e882a512f8c397dcf1b3ebdf9`.
+
 ## EasyRoute 1.1.24
 
 Patch **1.1.24** is named after the **24 defects fixed** during the stability audit.
