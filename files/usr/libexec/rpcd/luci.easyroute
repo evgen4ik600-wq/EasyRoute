@@ -150,7 +150,8 @@ get_rule() {
     json_add_string source_url "$(uci -q get "easyroute.$id.source_url" 2>/dev/null || true)"
     json_add_boolean auto_update "$(uci -q get "easyroute.$id.auto_update" 2>/dev/null || echo 1)"
     json_add_int update_interval "$(uci -q get "easyroute.$id.update_interval" 2>/dev/null || echo 86400)"
-    json_add_string last_update "$(cat "$RUNDIR/$id.last" 2>/dev/null || echo 0)"
+    json_add_string last_update "$(cat "$RUNDIR/$id.success" 2>/dev/null || cat "$RUNDIR/$id.last" 2>/dev/null || echo 0)"
+    json_add_string last_attempt "$(cat "$RUNDIR/$id.attempt" 2>/dev/null || echo 0)"
     json_add_string update_state "$(cat "$RUNDIR/$id.state" 2>/dev/null || true)"
     json_add_string update_message "$(cat "$RUNDIR/$id.message" 2>/dev/null || true)"
     json_add_string profile "$(uci -q get "easyroute.$id.profile" 2>/dev/null || true)"
@@ -201,6 +202,12 @@ save_rule() {
             *) reply 0 'URL должен начинаться с http:// или https://'; return ;;
         esac
 
+        cfgbak="/tmp/easyroute-config.$id.$"
+        listbak="/tmp/easyroute-list.$id.$"
+        cp -p /etc/config/easyroute "$cfgbak" 2>/dev/null || true
+        had_list=0
+        if [ -f "$LISTDIR/$id.txt" ]; then cp -p "$LISTDIR/$id.txt" "$listbak"; had_list=1; fi
+
         uci -q delete "easyroute.$id" 2>/dev/null || true
         uci set "easyroute.$id=rule"
         uci set "easyroute.$id.name=$name"
@@ -209,19 +216,25 @@ save_rule() {
         uci set "easyroute.$id.source_url=$source_url"
         uci set "easyroute.$id.auto_update=$auto_update"
         uci set "easyroute.$id.update_interval=$update_interval"
-        [ -n "$profile" ] && uci set "easyroute.$id.profile=$profile"
+        [ -n "$profile" ] && uci set "easyroute.$id.profile=$profile" || uci -q delete "easyroute.$id.profile"
         uci commit easyroute
 
         if out="$(/usr/libexec/easyroute-url-update one "$id" 2>&1)"; then
+            rm -f "$cfgbak" "$listbak"
             reply 1 "URL сохранён и обновлён: $out"
         else
+            [ -f "$cfgbak" ] && cp -p "$cfgbak" /etc/config/easyroute
+            if [ "$had_list" = '1' ]; then
+                mv "$listbak" "$LISTDIR/$id.txt"
+            else
+                rm -f "$LISTDIR/$id.txt" "$listbak"
+            fi
+            rm -f "$cfgbak" "$RUNDIR/$id.last" "$RUNDIR/$id.success" "$RUNDIR/$id.attempt" "$RUNDIR/$id.state" "$RUNDIR/$id.message"
+            /usr/libexec/easyroute apply >/dev/null 2>&1 || true
             if [ "$is_new" = '1' ]; then
-                uci -q delete "easyroute.$id" 2>/dev/null || true
-                uci commit easyroute
-                rm -f "$LISTDIR/$id.txt" "$RUNDIR/$id.last" "$RUNDIR/$id.state" "$RUNDIR/$id.message"
                 reply 0 "Не удалось добавить URL-список: $out"
             else
-                reply 0 "URL сохранён, но обновить список не удалось. Старый список сохранён: $out"
+                reply 0 "Изменения отменены, старое правило восстановлено: $out"
             fi
         fi
         return
@@ -240,7 +253,13 @@ save_rule() {
     [ $((free_kb-need_kb)) -ge "$RESERVE_KB" ] || { reply 0 'Недостаточно flash. EasyRoute оставляет минимум 1 МБ свободным.'; return; }
 
     mkdir -p "$LISTDIR"
-    tmp="$LISTDIR/.$id.tmp.$$"
+    cfgbak="/tmp/easyroute-config.$id.$"
+    listbak="/tmp/easyroute-list.$id.$"
+    cp -p /etc/config/easyroute "$cfgbak" 2>/dev/null || true
+    had_list=0
+    if [ -f "$LISTDIR/$id.txt" ]; then cp -p "$LISTDIR/$id.txt" "$listbak"; had_list=1; fi
+
+    tmp="$LISTDIR/.$id.tmp.$"
     printf '%s\n' "$content" | tr -d '\r' > "$tmp"
     mv "$tmp" "$LISTDIR/$id.txt"
 
@@ -249,24 +268,46 @@ save_rule() {
     uci set "easyroute.$id.name=$name"
     uci set "easyroute.$id.enabled=$enabled"
     uci set "easyroute.$id.source_type=manual"
-    [ -n "$profile" ] && uci set "easyroute.$id.profile=$profile"
+    [ -n "$profile" ] && uci set "easyroute.$id.profile=$profile" || uci -q delete "easyroute.$id.profile"
     uci commit easyroute
-    rm -f "$RUNDIR/$id.last" "$RUNDIR/$id.state" "$RUNDIR/$id.message"
+    rm -f "$RUNDIR/$id.last" "$RUNDIR/$id.success" "$RUNDIR/$id.attempt" "$RUNDIR/$id.state" "$RUNDIR/$id.message"
 
     if out="$(/usr/libexec/easyroute apply 2>&1)"; then
+        rm -f "$cfgbak" "$listbak"
         reply 1 'Сохранено и применено'
     else
-        reply 0 "Список сохранён, но не применён: $out"
+        [ -f "$cfgbak" ] && cp -p "$cfgbak" /etc/config/easyroute
+        if [ "$had_list" = '1' ]; then mv "$listbak" "$LISTDIR/$id.txt"; else rm -f "$LISTDIR/$id.txt" "$listbak"; fi
+        /usr/libexec/easyroute apply >/dev/null 2>&1 || true
+        rm -f "$cfgbak"
+        reply 0 "Изменения отменены: $out"
     fi
 }
 
 delete_rule() {
     json_load "$1"; json_get_var id id
     valid_id "$id" || { reply 0 'Некорректный ID'; return; }
+    [ "$(uci -q get "easyroute.$id" 2>/dev/null || true)" = 'rule' ] || { reply 0 'Правило не найдено'; return; }
+    cfgbak="/tmp/easyroute-delete-config.$id.$"
+    listbak="/tmp/easyroute-delete-list.$id.$"
+    cp -p /etc/config/easyroute "$cfgbak"
+    had_list=0
+    if [ -f "$LISTDIR/$id.txt" ]; then cp -p "$LISTDIR/$id.txt" "$listbak"; had_list=1; fi
+
     uci -q delete "easyroute.$id" 2>/dev/null || true
     uci commit easyroute
-    rm -f "$LISTDIR/$id.txt" "$RUNDIR/$id.last" "$RUNDIR/$id.state" "$RUNDIR/$id.message"
-    if out="$(/usr/libexec/easyroute apply 2>&1)"; then reply 1 'Удалено'; else reply 0 "Удалено, но применение завершилось ошибкой: $out"; fi
+    rm -f "$LISTDIR/$id.txt" "$RUNDIR/$id.last" "$RUNDIR/$id.success" "$RUNDIR/$id.attempt" "$RUNDIR/$id.state" "$RUNDIR/$id.message"
+
+    if out="$(/usr/libexec/easyroute apply 2>&1)"; then
+        rm -f "$cfgbak" "$listbak"
+        reply 1 'Удалено'
+    else
+        cp -p "$cfgbak" /etc/config/easyroute
+        [ "$had_list" = '1' ] && mv "$listbak" "$LISTDIR/$id.txt"
+        /usr/libexec/easyroute apply >/dev/null 2>&1 || true
+        rm -f "$cfgbak" "$listbak"
+        reply 0 "Удаление отменено: $out"
+    fi
 }
 
 
