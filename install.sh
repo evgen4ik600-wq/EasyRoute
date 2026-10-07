@@ -1,12 +1,14 @@
 #!/bin/sh
 set -eu
 
-VERSION='1.2.0'
+VERSION='1.2.6'
 REPO_REF='70d2d0c3f24e31a71dc643022390163b966304f1'
 REPO_BASE="https://raw.githubusercontent.com/evgen4ik600-wq/EasyRoute/$REPO_REF"
 AWG_INSTALL_URL='https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/03b62269e2edc168504f057cffaafda11b25ed92/amneziawg-install.sh'
-TMP='/tmp/easyroute-install'
+TMP="/tmp/easyroute-install.$"
 BACKUP='/etc/easyroute/backup'
+cleanup() { rm -rf "$TMP"; }
+trap cleanup EXIT INT TERM
 
 say() { printf '%s\n' "$*"; }
 fail() { printf 'ОШИБКА: %s\n' "$*" >&2; exit 1; }
@@ -59,7 +61,7 @@ say "EasyRoute v$VERSION bootstrap: OpenWrt $VER, свободно $((FREE_KB/10
 # Устанавливаем поддержку AmneziaWG 3.1, но НЕ создаём VPN-подключение.
 if ! command -v awg >/dev/null 2>&1 || ! pkg_has kmod-amneziawg || ! pkg_has luci-proto-amneziawg; then
     say 'Устанавливаю поддержку AmneziaWG 3.1...'
-    AWG_SCRIPT='/tmp/easyroute-amneziawg-install.sh'
+    AWG_SCRIPT="/tmp/easyroute-amneziawg-install.$"
     wget -qO "$AWG_SCRIPT" "$AWG_INSTALL_URL" || fail 'Не удалось скачать установщик AmneziaWG.'
     [ -s "$AWG_SCRIPT" ] || fail 'Установщик AmneziaWG пустой.'
     sh -n "$AWG_SCRIPT" || fail 'Ошибка синтаксиса установщика AmneziaWG.'
