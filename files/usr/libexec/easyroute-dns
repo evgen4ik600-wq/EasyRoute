@@ -44,12 +44,31 @@ install_stubby() {
     : > "$PKG_MARKER"
 }
 
+external_dns_detected() {
+    # Respect existing encrypted/local DNS stacks such as https-dns-proxy,
+    # dnscrypt-proxy or another localhost resolver. EasyRoute must not replace them.
+    servers="$(uci -q get "dhcp.$DHCP_SECTION.server" 2>/dev/null || true)"
+    if pidof https-dns-proxy >/dev/null 2>&1 || pidof dnscrypt-proxy >/dev/null 2>&1; then
+        return 0
+    fi
+    for s in $servers; do
+        case "$s" in
+            127.0.0.1#5453) ;;
+            127.0.0.1#*|::1#*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
 backup_once() {
     mkdir -p "$STATE"
     [ -f "$MARKER" ] && return 0
 
     if pkg_has stubby && [ ! -f "$PKG_MARKER" ]; then
         fail 'Stubby уже установлен вне EasyRoute. Чтобы не затереть существующий DNS, EasyRoute не будет менять его автоматически.'
+    fi
+    if external_dns_detected; then
+        fail 'Обнаружен уже настроенный локальный/защищённый DNS. EasyRoute не будет его перезаписывать.'
     fi
 
     cp -p /etc/config/dhcp "$STATE/dhcp.full" 2>/dev/null || true
@@ -207,6 +226,8 @@ disable_dot() {
 status() {
     enabled="$(uci -q get easyroute.main.secure_dns 2>/dev/null || echo 0)"
     provider="$(uci -q get easyroute.main.dns_provider 2>/dev/null || true)"
+    external=0
+    external_dns_detected && external=1
     running=0
     pidof stubby >/dev/null 2>&1 && running=1
     noresolv="$(uci -q get "dhcp.$DHCP_SECTION.noresolv" 2>/dev/null || echo 0)"
@@ -215,7 +236,7 @@ status() {
     printf '%s\n' "$servers" | grep -Fq '127.0.0.1#5453' && forward=1
     healthy=0
     [ "$enabled" = '1' ] && [ "$running" = '1' ] && [ "$noresolv" = '1' ] && [ "$forward" = '1' ] && healthy=1
-    printf 'enabled=%s\nprovider=%s\nrunning=%s\nforward=%s\nhealthy=%s\n' "$enabled" "$provider" "$running" "$forward" "$healthy"
+    printf 'enabled=%s\nprovider=%s\nexternal=%s\nrunning=%s\nforward=%s\nhealthy=%s\n' "$enabled" "$provider" "$external" "$running" "$forward" "$healthy"
 }
 
 case "${1:-}" in
