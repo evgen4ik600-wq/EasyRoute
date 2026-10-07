@@ -668,7 +668,12 @@ catalog() {
         reply 0 'Модуль каталога не установлен'
         return
     }
-    /usr/libexec/easyroute-catalog catalog
+    out="$(/usr/libexec/easyroute-catalog catalog 2>/dev/null || true)"
+    [ -n "$out" ] || {
+        reply 0 'Не удалось получить ответ каталогов OpenCCK'
+        return
+    }
+    printf '%s\n' "$out"
 }
 
 valid_site_list() {
