@@ -9,6 +9,24 @@ CATALOG_MAX_BYTES=1048576
 RESERVE_KB=1024
 DEFAULT_INTERVAL=86400
 RETRY_INTERVAL=300
+LOCKDIR='/tmp/easyroute-url-update.lock'
+
+acquire_lock() {
+    if mkdir "$LOCKDIR" 2>/dev/null; then
+        printf '%s\n' "$" > "$LOCKDIR/pid"
+        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+        return 0
+    fi
+    oldpid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && ! kill -0 "$oldpid" 2>/dev/null; then
+        rm -rf "$LOCKDIR"
+        mkdir "$LOCKDIR" 2>/dev/null || return 1
+        printf '%s\n' "$" > "$LOCKDIR/pid"
+        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+        return 0
+    fi
+    return 1
+}
 
 log() { logger -t easyroute-url "$*" 2>/dev/null || true; }
 fail() { printf '%s\n' "$*" >&2; return 1; }
@@ -335,13 +353,16 @@ update_many() {
 
 case "${1:-}" in
     one)
+        acquire_lock || { fail 'URL updater уже выполняется'; exit 1; }
         [ -n "${2:-}" ] || { fail 'Specify rule ID'; exit 2; }
         update_one "$2"
         ;;
     all)
+        acquire_lock || { fail 'URL updater уже выполняется'; exit 1; }
         update_many all
         ;;
     due)
+        acquire_lock || { fail 'URL updater уже выполняется'; exit 1; }
         update_many due
         ;;
     *)
