@@ -55,15 +55,48 @@ pair_used() {
     return 1
 }
 
+system_pair_conflict() {
+    mark="$1"; table="$2"; prio="$3"
+    for family in 4 6; do
+        if [ "$family" = '6' ]; then
+            rules="$(ip -6 rule show 2>/dev/null || true)"
+            routes="$(ip -6 route show table "$table" 2>/dev/null || true)"
+        else
+            rules="$(ip rule show 2>/dev/null || true)"
+            routes="$(ip route show table "$table" 2>/dev/null || true)"
+        fi
+
+        slot="$(printf '%s\n' "$rules" | awk -v p="$prio:" '$1==p{print}')"
+        tabrules="$(printf '%s\n' "$rules" | grep -E "(lookup|table) $table([[:space:]]|$)" || true)"
+        own="$(printf '%s\n' "$tabrules" | awk -v p="$prio:" '$1==p{print}' | grep -F "fwmark $mark/0xff" || true)"
+
+        # Empty slot/table is free. An exact existing EasyRoute-looking pair
+        # is also accepted so the first auto profile can migrate legacy 166.
+        if [ -n "$slot" ]; then
+            printf '%s\n' "$slot" | grep -Fq "fwmark $mark/0xff" &&
+                printf '%s\n' "$slot" | grep -Eq "(lookup|table) $table([[:space:]]|$)" || return 0
+        fi
+        if [ -n "$tabrules" ]; then
+            [ -n "$own" ] || return 0
+            foreign="$(printf '%s\n' "$tabrules" | grep -Fv "$own" || true)"
+            [ -z "$foreign" ] || return 0
+        fi
+        [ -z "$routes" ] || [ -n "$own" ] || return 0
+    done
+    return 1
+}
+
 allocate_pair() {
     n=0
+    profile_count="$(vpn_ids | wc -w | tr -d ' ')"
     while [ "$n" -lt 87 ]; do
         mark_dec=$((102+n))
         table=$((166+n))
+        prio=$((1066+profile_count))
         [ "$mark_dec" -le 255 ] || break
         [ "$table" -le 252 ] || break
         mark="$(printf '0x%x' "$mark_dec")"
-        if ! pair_used "$mark" "$table"; then
+        if ! pair_used "$mark" "$table" && ! system_pair_conflict "$mark" "$table" "$prio"; then
             printf '%s %s\n' "$mark" "$table"
             return 0
         fi
