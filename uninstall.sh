@@ -18,7 +18,7 @@ rm -f /usr/share/nftables.d/chain-pre/forward/90-easyroute-forward.nft
 rm -f /usr/share/nftables.d/table-post/90-easyroute-nat.nft
 
 if [ -f /etc/dnsmasq.conf ]; then
-    awk 'BEGIN{skip=0} /^# EASYROUTE-BEGIN$/{skip=1;next} /^# EASYROUTE-END$/{skip=0;next} skip==0{print}' /etc/dnsmasq.conf > /tmp/dnsmasq.conf.easyroute
+    awk 'BEGIN{skip=0} /^# EASYROUTE-BEGIN$/{skip=1;next} /^# EASYROUTE-END$/{skip=0;next} skip==0{print}' /etc/dnsmasq.conf > /tmp/dnsmasq.conf.easyroute.$
     cat /tmp/dnsmasq.conf.easyroute > /etc/dnsmasq.conf
     rm -f /tmp/dnsmasq.conf.easyroute
 fi
