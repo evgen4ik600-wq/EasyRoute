@@ -32,6 +32,7 @@ command -v fw4 >/dev/null 2>&1 || fail 'Не найден firewall4.'
 command -v nft >/dev/null 2>&1 || fail 'Не найден nftables.'
 command -v ip >/dev/null 2>&1 || fail 'Не найдена команда ip.'
 command -v wget >/dev/null 2>&1 || fail 'Не найден wget.'
+command -v jsonfilter >/dev/null 2>&1 || fail 'Не найден jsonfilter.'
 [ -r /usr/share/libubox/jshn.sh ] || fail 'Не найден jshn (libubox).'
 [ -d /www/luci-static/resources/view ] || fail 'LuCI не установлен. Используйте образ OpenWrt с LuCI.'
 
