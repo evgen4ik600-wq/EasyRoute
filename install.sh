@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION='1.2.19'
+VERSION='1.2.20'
 REPO_REF='2b22abfa27dd89b24f0bd71348432bb6427a129b'
 REPO_BASE="https://raw.githubusercontent.com/evgen4ik600-wq/EasyRoute/$REPO_REF"
 AWG_INSTALL_URL='https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/03b62269e2edc168504f057cffaafda11b25ed92/amneziawg-install.sh'
@@ -100,7 +100,7 @@ fi
 [ -n "$IFACE" ] || IFACE="${EXISTING:-AWG}"
 
 rm -rf "$TMP"; mkdir -p "$TMP"
-FILES='files/usr/libexec/easyroute files/usr/libexec/easyroute-url-update files/usr/libexec/easyroute-dns files/usr/libexec/easyroute-catalog files/usr/libexec/rpcd/luci.easyroute files/etc/init.d/easyroute files/etc/hotplug.d/iface/95-easyroute files/usr/share/luci/menu.d/luci-app-easyroute.json files/usr/share/rpcd/acl.d/luci-app-easyroute.json files/www/luci-static/resources/view/easyroute/routes-v1219.js'
+FILES='files/usr/libexec/easyroute files/usr/libexec/easyroute-url-update files/usr/libexec/easyroute-dns files/usr/libexec/easyroute-catalog files/usr/libexec/easyroute-audit files/usr/libexec/rpcd/luci.easyroute files/etc/init.d/easyroute files/etc/hotplug.d/iface/95-easyroute files/usr/share/luci/menu.d/luci-app-easyroute.json files/usr/share/rpcd/acl.d/luci-app-easyroute.json files/www/luci-static/resources/view/easyroute/routes-v1220.js'
 for f in $FILES; do
     mkdir -p "$TMP/$(dirname "$f")"
     wget -qO "$TMP/$f" "$REPO_BASE/$f" || fail "Не удалось скачать $f"
@@ -112,6 +112,7 @@ sh -n "$TMP/files/usr/libexec/easyroute" || fail 'Ошибка синтакси�
 sh -n "$TMP/files/usr/libexec/easyroute-url-update" || fail 'Ошибка синтаксиса URL updater.'
 sh -n "$TMP/files/usr/libexec/easyroute-dns" || fail 'Ошибка синтаксиса DNS manager.'
 sh -n "$TMP/files/usr/libexec/easyroute-catalog" || fail 'Ошибка синтаксиса catalog helper.'
+sh -n "$TMP/files/usr/libexec/easyroute-audit" || fail 'Ошибка синтаксиса audit helper.'
 sh -n "$TMP/files/usr/libexec/rpcd/luci.easyroute" || fail 'Ошибка синтаксиса RPC.'
 sh -n "$TMP/files/etc/init.d/easyroute" || fail 'Ошибка синтаксиса init.'
 sh -n "$TMP/files/etc/hotplug.d/iface/95-easyroute" || fail 'Ошибка синтаксиса hotplug.'
@@ -151,7 +152,7 @@ for f in $FILES; do
     mkdir -p "$(dirname "$dst")"
     cp "$TMP/$f" "$dst"
 done
-chmod 0755 /usr/libexec/easyroute /usr/libexec/easyroute-url-update /usr/libexec/easyroute-dns /usr/libexec/easyroute-catalog /usr/libexec/rpcd/luci.easyroute /etc/init.d/easyroute /etc/hotplug.d/iface/95-easyroute
+chmod 0755 /usr/libexec/easyroute /usr/libexec/easyroute-url-update /usr/libexec/easyroute-dns /usr/libexec/easyroute-catalog /usr/libexec/easyroute-audit /usr/libexec/rpcd/luci.easyroute /etc/init.d/easyroute /etc/hotplug.d/iface/95-easyroute
 
 if [ ! -f /etc/config/easyroute ]; then
     cat > /etc/config/easyroute <<EOF2
@@ -197,7 +198,8 @@ rm -f /www/luci-static/resources/view/easyroute/routes-v110.js \
       /www/luci-static/resources/view/easyroute/routes-v126.js \
       /www/luci-static/resources/view/easyroute/routes-v1216.js \
       /www/luci-static/resources/view/easyroute/routes-v1217.js \
-      /www/luci-static/resources/view/easyroute/routes-v1218.js 2>/dev/null || true
+      /www/luci-static/resources/view/easyroute/routes-v1218.js \
+      /www/luci-static/resources/view/easyroute/routes-v1219.js 2>/dev/null || true
 
 /etc/init.d/easyroute enable
 
