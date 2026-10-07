@@ -2,7 +2,14 @@
   "admin/network/easyroute": {
     "title": "🚀 EasyRoute",
     "order": 85,
-    "action": { "type": "view", "path": "easyroute/routes-v110" },
-    "depends": { "acl": [ "luci-app-easyroute" ] }
+    "action": {
+      "type": "view",
+      "path": "easyroute/routes-v126"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-easyroute"
+      ]
+    }
   }
 }
