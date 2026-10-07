@@ -41,7 +41,7 @@ jobs:
 
       - name: Shellcheck critical errors
         run: |
-          shellcheck -S error -e SC1091             install.sh easyroute-install.sh uninstall.sh             files/usr/libexec/easyroute             files/usr/libexec/easyroute-url-update             files/usr/libexec/easyroute-dns             files/usr/libexec/easyroute-catalog             files/usr/libexec/rpcd/luci.easyroute             files/etc/init.d/easyroute             files/etc/hotplug.d/iface/95-easyroute
+          shellcheck -S error -e SC1091             install.sh easyroute-install.sh uninstall.sh             files/usr/libexec/easyroute             files/usr/libexec/easyroute-url-update             files/usr/libexec/easyroute-dns             files/usr/libexec/easyroute-catalog             files/usr/libexec/easyroute-audit             files/usr/libexec/easyroute-vpn-sync             files/usr/libexec/rpcd/luci.easyroute             files/etc/init.d/easyroute             files/etc/hotplug.d/iface/95-easyroute
 
       - name: JSON syntax
         run: |
@@ -121,7 +121,9 @@ jobs:
               "unique updater temp": 'easyroute-url.$id.$' in updater and 'easyroute-url.$id.$"' not in updater,
               "unique manual temp": '.$id.tmp.$' in rpc and '.$id.tmp.$"' not in rpc,
               "updater serialized": "easyroute-url-update.lock" in updater and "acquire_lock" in updater,
-              "engine serialized": "easyroute-engine.lock" in engine and "acquire_lock" in engine,
+              "engine serialized": "easyroute-engine.lock" in engine and "acquire_lock" in engine and 'printf \'%s\\n\' "$" > "$LOCKDIR/pid"' in engine,
+              "updater stale-lock PID": 'printf \'%s\\n\' "$" > "$LOCKDIR/pid"' in updater,
+              "profile backups unique": 'easyroute-profile.$id.$' in rpc and 'easyroute-profile-delete.$id.$' in rpc,
               "success only after apply": "Updated and applied" in updater and "waiting for apply" in updater,
               "routing table ownership": "table_conflict()" in engine and "Конфликт IPv4 routing table" in engine,
               "IPv6 input sanitized": "^[0-9A-Fa-f:]+$" in engine and "b[2]+0<=128" in engine,
@@ -133,6 +135,8 @@ jobs:
               "VPN status uses interface state": "handshake_age" in rpc and "интерфейс поднят · нет handshake" in ui,
               "multi AWG discovery": "proto='amneziawg'" in vpnsync and "auto_discovered=1" in vpnsync and "sync_auto_vpns" in engine and "sync_auto_vpns" in rpc,
               "multi AWG unique routes": "allocate_pair()" in vpnsync and "0x%x" in vpnsync and "166+n" in vpnsync,
+              "multi AWG avoids foreign tables": "system_pair_conflict()" in vpnsync and "ip route show table" in vpnsync and "ip -6 route show table" in vpnsync,
+              "route-down checks ownership": "Отказ очистки IPv4 table" in engine and "table_conflict 4" in engine and "table_conflict 6" in engine,
               "removed AWG remains visible": "present=0" in vpnsync and "интерфейс отсутствует — правило требует внимания" in ui,
               "no AWG import button": "➕ Добавить / импортировать AWG" not in ui,
               "hotplug discovers new AWG": "network.$INTERFACE.proto" in hotplug and "easyroute-vpn-sync" in hotplug,
