@@ -108,16 +108,18 @@ profile_for_rule() {
     [ -n "$p" ] && printf '%s\n' "$p" || printf '__default\n'
 }
 route_down() {
-    while ip rule del priority "$RULE_PRIO" 2>/dev/null; do :; done
-    while ip -6 rule del priority "$RULE_PRIO" 2>/dev/null; do :; done
+    local id n m t
+    # Удаляем только правила EasyRoute с ожидаемыми mark/table.
+    while ip rule del priority "$RULE_PRIO" fwmark "$MARK/0xff" lookup "$TABLE" 2>/dev/null; do :; done
+    while ip -6 rule del priority "$RULE_PRIO" fwmark "$MARK/0xff" lookup "$TABLE" 2>/dev/null; do :; done
     ip route flush table "$TABLE" 2>/dev/null || true
     ip -6 route flush table "$TABLE" 2>/dev/null || true
     for id in $(vpn_ids); do
         n="$(profile_num "$id")"
         m="$(profile_field "$id" mark)"
         t="$(profile_field "$id" table)"
-        while ip rule del priority "$((RULE_PRIO+n))" fwmark "$m/0xff" 2>/dev/null; do :; done
-        while ip -6 rule del priority "$((RULE_PRIO+n))" fwmark "$m/0xff" 2>/dev/null; do :; done
+        while ip rule del priority "$((RULE_PRIO+n))" fwmark "$m/0xff" lookup "$t" 2>/dev/null; do :; done
+        while ip -6 rule del priority "$((RULE_PRIO+n))" fwmark "$m/0xff" lookup "$t" 2>/dev/null; do :; done
         ip route flush table "$t" 2>/dev/null || true
         ip -6 route flush table "$t" 2>/dev/null || true
     done
@@ -333,6 +335,7 @@ generate_files() {
             if [ "$fallback" = 'block' ]; then
                 echo "ip daddr @$set4 drop" >> "$tmp/forward.nft"
                 echo "ip6 daddr @$set6 drop" >> "$tmp/forward.nft"
+                echo "ether saddr @$setm drop" >> "$tmp/forward.nft"
             fi
         fi
         wc -l < "$fd" >> "$tmp/all-domain-count"
