@@ -133,15 +133,46 @@ profile_for_rule() {
     [ -n "$p" ] && printf '%s\n' "$p" || printf '__default\n'
 }
 route_down() {
-    local id n m t
-    # Удаляем только правила EasyRoute с ожидаемыми mark/table.
-    if [ -z "$(vpn_ids)" ]; then
+    local id n m t prio ids
+    ids="$(vpn_ids)"
+
+    # Preflight first: never flush a routing table that is also owned by
+    # another policy-routing rule. This keeps route-down transactional.
+    if [ -z "$ids" ]; then
+        table_conflict 4 "$RULE_PRIO" "$MARK" "$TABLE" && {
+            echo "Отказ очистки IPv4 table $TABLE: таблица используется не только EasyRoute." >&2
+            return 1
+        }
+        table_conflict 6 "$RULE_PRIO" "$MARK" "$TABLE" && {
+            echo "Отказ очистки IPv6 table $TABLE: таблица используется не только EasyRoute." >&2
+            return 1
+        }
+    else
+        for id in $ids; do
+            n="$(profile_num "$id")"
+            m="$(profile_field "$id" mark)"
+            t="$(profile_field "$id" table)"
+            prio="$((RULE_PRIO+n))"
+            table_conflict 4 "$prio" "$m" "$t" && {
+                echo "Отказ очистки IPv4 table $t: таблица используется не только EasyRoute." >&2
+                return 1
+            }
+            table_conflict 6 "$prio" "$m" "$t" && {
+                echo "Отказ очистки IPv6 table $t: таблица используется не только EasyRoute." >&2
+                return 1
+            }
+        done
+    fi
+
+    if [ -z "$ids" ]; then
         while ip rule del priority "$RULE_PRIO" fwmark "$MARK/0xff" lookup "$TABLE" 2>/dev/null; do :; done
         while ip -6 rule del priority "$RULE_PRIO" fwmark "$MARK/0xff" lookup "$TABLE" 2>/dev/null; do :; done
         ip route flush table "$TABLE" 2>/dev/null || true
         ip -6 route flush table "$TABLE" 2>/dev/null || true
+        return 0
     fi
-    for id in $(vpn_ids); do
+
+    for id in $ids; do
         n="$(profile_num "$id")"
         m="$(profile_field "$id" mark)"
         t="$(profile_field "$id" table)"
