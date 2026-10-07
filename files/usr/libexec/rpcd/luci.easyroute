@@ -108,6 +108,9 @@ list_rules() {
         enabled="$(uci -q get "easyroute.$id.enabled" 2>/dev/null || echo 1)"
         source_type="$(uci -q get "easyroute.$id.source_type" 2>/dev/null || echo manual)"
         source_url="$(uci -q get "easyroute.$id.source_url" 2>/dev/null || true)"
+        catalog_main_sites="$(uci -q get "easyroute.$id.catalog_main_sites" 2>/dev/null || true)"
+        catalog_beta_sites="$(uci -q get "easyroute.$id.catalog_beta_sites" 2>/dev/null || true)"
+        site_count="$(printf '%s %s\n' "$catalog_main_sites" "$catalog_beta_sites" | awk '{print NF}')"
         auto_update="$(uci -q get "easyroute.$id.auto_update" 2>/dev/null || echo 1)"
         update_interval="$(uci -q get "easyroute.$id.update_interval" 2>/dev/null || echo 86400)"
         last_update="$(cat "$RUNDIR/$id.last" 2>/dev/null || echo 0)"
@@ -123,6 +126,9 @@ list_rules() {
         json_add_int count "${count:-0}"
         json_add_string source_type "$source_type"
         json_add_string source_url "$source_url"
+        json_add_string catalog_main_sites "$catalog_main_sites"
+        json_add_string catalog_beta_sites "$catalog_beta_sites"
+        json_add_int site_count "${site_count:-0}"
         json_add_boolean auto_update "$auto_update"
         json_add_int update_interval "${update_interval:-86400}"
         json_add_string last_update "$last_update"
@@ -148,6 +154,8 @@ get_rule() {
     json_add_string content "$(cat "$LISTDIR/$id.txt" 2>/dev/null || true)"
     json_add_string source_type "$(uci -q get "easyroute.$id.source_type" 2>/dev/null || echo manual)"
     json_add_string source_url "$(uci -q get "easyroute.$id.source_url" 2>/dev/null || true)"
+    json_add_string catalog_main_sites "$(uci -q get "easyroute.$id.catalog_main_sites" 2>/dev/null || true)"
+    json_add_string catalog_beta_sites "$(uci -q get "easyroute.$id.catalog_beta_sites" 2>/dev/null || true)"
     json_add_boolean auto_update "$(uci -q get "easyroute.$id.auto_update" 2>/dev/null || echo 1)"
     json_add_int update_interval "$(uci -q get "easyroute.$id.update_interval" 2>/dev/null || echo 86400)"
     json_add_string last_update "$(cat "$RUNDIR/$id.success" 2>/dev/null || cat "$RUNDIR/$id.last" 2>/dev/null || echo 0)"
@@ -648,6 +656,339 @@ discover_devices() {
         json_close_object
     done
     json_close_array; json_dump
+}
+
+catalog() {
+    [ -x /usr/libexec/easyroute-catalog ] || {
+        reply 0 'Модуль каталога не установлен'
+        return
+    }
+    /usr/libexec/easyroute-catalog catalog
+}
+
+valid_site_list() {
+    local s count=0
+    for s in $1; do
+        count=$((count+1))
+        [ "$count" -le 300 ] || return 1
+        printf '%s' "$s" | grep -Eq '^[A-Za-z0-9._@-]+
+    enabled="$(uci -q get easyroute.main.secure_dns 2>/dev/null || echo 0)"
+    provider="$(uci -q get easyroute.main.dns_provider 2>/dev/null || true)"
+    running=0; forward=0; healthy=0
+    pidof stubby >/dev/null 2>&1 && running=1
+    servers="$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)"
+    printf '%s\n' "$servers" | grep -Fq '127.0.0.1#5453' && forward=1
+    if [ "$enabled" = '1' ] && [ "$running" = '1' ] && [ "$forward" = '1' ] &&
+       [ "$(uci -q get dhcp.@dnsmasq[0].noresolv 2>/dev/null || echo 0)" = '1' ]; then
+        healthy=1
+    fi
+    json_init
+    json_add_boolean ok 1
+    json_add_boolean enabled "$enabled"
+    json_add_string provider "$provider"
+    json_add_boolean running "$running"
+    json_add_boolean forward "$forward"
+    json_add_boolean healthy "$healthy"
+    json_dump
+}
+
+dns_apply() {
+    json_load "$1"
+    json_get_var enabled enabled
+    json_get_var provider provider
+    case "$enabled" in 1|true) enabled=1 ;; *) enabled=0 ;; esac
+    case "$provider" in adguard|cloudflare|google|'') ;; *) reply 0 'Неизвестный DNS-провайдер'; return ;; esac
+    [ -x /usr/libexec/easyroute-dns ] || { reply 0 'DNS manager не установлен'; return; }
+
+    if [ "$enabled" = '1' ]; then
+        [ -n "$provider" ] || provider='adguard'
+        if out="$(/usr/libexec/easyroute-dns enable "$provider" 2>&1)"; then
+            reply 1 "$out"
+        else
+            reply 0 "$out"
+        fi
+    else
+        if out="$(/usr/libexec/easyroute-dns disable 2>&1)"; then
+            reply 1 "$out"
+        else
+            reply 0 "$out"
+        fi
+    fi
+}
+
+selftest() {
+    iface="$(detect_iface)"
+    internet=0; vpn=0; firewall=0; dns=0; routing=0; updater=0; conflicts=0; dot=1
+    tmp="/tmp/easyroute-selftest.$$"
+
+    nslookup openwrt.org 127.0.0.1 >/dev/null 2>&1 && dns=1
+    wget -qO /dev/null --timeout=10 'https://openwrt.org/' >/dev/null 2>&1 && internet=1
+
+    if command -v awg >/dev/null 2>&1; then
+        ts="$(awg show "$iface" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}')"
+        case "$ts" in
+            ''|0) ;;
+            *) now="$(date +%s)"; age=$((now-ts)); [ "$age" -ge 0 ] && [ "$age" -le 300 ] && vpn=1 ;;
+        esac
+    fi
+
+    fw4 -q check >/dev/null 2>&1 && firewall=1
+    dnsmasq --test --conf-file=/etc/dnsmasq.conf >/dev/null 2>&1 || dns=0
+    if [ "$(uci -q get easyroute.main.secure_dns 2>/dev/null || echo 0)" = '1' ]; then
+        dot=0
+        if pidof stubby >/dev/null 2>&1 &&
+           printf '%s\n' "$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)" | grep -Fq '127.0.0.1#5453' &&
+           [ "$(uci -q get dhcp.@dnsmasq[0].noresolv 2>/dev/null || echo 0)" = '1' ] &&
+           [ "$dns" = '1' ]; then
+            dot=1
+        fi
+    fi
+
+    expected=0; good=0; n=0
+    ids="$(uci show easyroute 2>/dev/null | sed -n "s/^easyroute\.\([^.=]*\)=vpn$/\1/p")"
+    if [ -z "$ids" ]; then ids='__default'; fi
+    for p in $ids; do
+        if [ "$p" = '__default' ]; then m='0x66'; t='166'; en='1'; else
+            m="$(uci -q get "easyroute.$p.mark" 2>/dev/null || echo 0x66)"
+            t="$(uci -q get "easyroute.$p.table" 2>/dev/null || echo 166)"
+            en="$(uci -q get "easyroute.$p.enabled" 2>/dev/null || echo 1)"
+        fi
+        prio=$((1066+n)); n=$((n+1))
+        [ "$en" = '1' ] || continue
+        expected=$((expected+1))
+        line="$(ip rule show 2>/dev/null | awk -v p="$prio:" '$1==p{print; exit}')"
+        if [ -z "$line" ]; then
+            :
+        elif printf '%s' "$line" | grep -Fq "fwmark $m/0xff" && printf '%s' "$line" | grep -Eq "(lookup|table) $t([[:space:]]|$)"; then
+            good=$((good+1))
+        else
+            conflicts=1
+        fi
+    done
+    [ "$expected" -gt 0 ] && [ "$good" -eq "$expected" ] && routing=1
+
+    if [ -x /usr/libexec/easyroute-url-update ]; then
+        if wget -qO "$tmp" --timeout=10 'https://iplist.opencck.org/?format=text&data=domains&site=instagram.com&wildcard=1' >/dev/null 2>&1 && [ -s "$tmp" ]; then
+            updater=1
+        fi
+        rm -f "$tmp"
+    fi
+
+    all_ok=0
+    [ "$internet" = 1 ] && [ "$vpn" = 1 ] && [ "$firewall" = 1 ] && [ "$dns" = 1 ] && [ "$routing" = 1 ] && [ "$updater" = 1 ] && [ "$conflicts" = 0 ] && [ "$dot" = 1 ] && all_ok=1
+
+    json_init; json_add_boolean ok 1
+    json_add_boolean internet "$internet"; json_add_boolean vpn "$vpn"
+    json_add_boolean firewall "$firewall"; json_add_boolean dns "$dns"
+    json_add_boolean routing "$routing"; json_add_boolean updater "$updater"
+    json_add_boolean dot "$dot"; json_add_boolean conflicts "$conflicts"; json_add_boolean all_ok "$all_ok"
+    json_dump
+}
+
+diagnostics() {
+    json_init; json_add_boolean ok 1
+    json_add_string openwrt "$(grep -o "DISTRIB_RELEASE='[^']*'" /etc/openwrt_release 2>/dev/null | cut -d"'" -f2)"
+    json_add_string awg_version "$(awg --version 2>/dev/null | head -n1 || echo not-installed)"
+    json_add_string firewall "$(fw4 -q check >/dev/null 2>&1 && echo OK || echo ERROR)"
+    json_add_string dnsmasq "$(dnsmasq --test --conf-file=/etc/dnsmasq.conf >/dev/null 2>&1 && echo OK || echo ERROR)"
+    json_add_string iface "$(detect_iface)"
+    json_add_string ip_rules "$(ip rule show 2>/dev/null | tr '\n' ';' | cut -c1-1800)"
+    json_add_string routes "$(ip route show table 166 2>/dev/null | tr '\n' ';' | cut -c1-1000)"
+    json_add_string nft "$(nft list table inet fw4 2>/dev/null | grep -c easyroute || echo 0)"
+    json_add_string log "$(tail -n 30 /tmp/easyroute-fw4.log 2>/dev/null | tr '\n' ' ' | cut -c1-1500)"
+    json_dump
+}
+
+case "${1:-}" in
+    list)
+        json_init
+        json_add_object status; json_close_object
+        json_add_object list_rules; json_close_object
+        json_add_object get_rule; json_add_string id String; json_close_object
+        json_add_object save_rule
+            json_add_string id String
+            json_add_string name String
+            json_add_boolean enabled Boolean
+            json_add_string content String
+            json_add_string source_type String
+            json_add_string source_url String
+            json_add_boolean auto_update Boolean
+            json_add_string update_interval String
+            json_add_string profile String
+        json_close_object
+        json_add_object profiles; json_close_object
+        json_add_object save_profile
+            json_add_string id String
+            json_add_string name String
+            json_add_string interface String
+            json_add_string mark String
+            json_add_string table String
+            json_add_boolean enabled Boolean
+        json_close_object
+        json_add_object delete_profile; json_add_string id String; json_close_object
+        json_add_object devices; json_close_object
+        json_add_object save_device
+            json_add_string id String
+            json_add_string name String
+            json_add_string mac String
+            json_add_string profile String
+            json_add_boolean enabled Boolean
+        json_close_object
+        json_add_object delete_device; json_add_string id String; json_close_object
+        json_add_object test_route
+            json_add_string host String
+            json_add_string profile String
+        json_close_object
+        json_add_object toggle_rule; json_add_string id String; json_add_boolean enabled Boolean; json_close_object
+        json_add_object discover_devices; json_close_object
+        json_add_object selftest; json_close_object
+        json_add_object catalog; json_close_object
+        json_add_object save_catalog
+            json_add_string id String
+            json_add_string name String
+            json_add_string profile String
+            json_add_string main_sites String
+            json_add_string beta_sites String
+        json_close_object
+        json_add_object dns_status; json_close_object
+        json_add_object dns_apply; json_add_boolean enabled Boolean; json_add_string provider String; json_close_object
+        json_add_object diagnostics; json_close_object
+        json_add_object settings; json_close_object
+        json_add_object save_settings
+            json_add_string fallback String
+            json_add_string default_profile String
+        json_close_object
+        json_add_object delete_rule; json_add_string id String; json_close_object
+        json_add_object update_rule; json_add_string id String; json_close_object
+        json_add_object update_all; json_close_object
+        json_add_object apply; json_close_object
+        json_dump
+        ;;
+    call)
+        method="${2:-}"; payload="$(cat)"
+        case "$method" in
+            status) status ;;
+            list_rules) list_rules ;;
+            get_rule) get_rule "$payload" ;;
+            save_rule) save_rule "$payload" ;;
+            delete_rule) delete_rule "$payload" ;;
+            update_rule)
+                json_load "$payload"; json_get_var id id
+                valid_id "$id" || { reply 0 'Некорректный ID'; exit 0; }
+                if out="$(/usr/libexec/easyroute-url-update one "$id" 2>&1)"; then reply 1 "$out"; else reply 0 "$out"; fi
+                ;;
+            update_all)
+                if out="$(/usr/libexec/easyroute-url-update all 2>&1)"; then reply 1 "$out"; else reply 0 "$out"; fi
+                ;;
+            profiles) profiles ;;
+            save_profile) save_profile "$payload" ;;
+            delete_profile) delete_profile "$payload" ;;
+            devices) devices ;;
+            save_device) save_device "$payload" ;;
+            delete_device) delete_device "$payload" ;;
+            test_route) test_route "$payload" ;;
+            toggle_rule) toggle_rule "$payload" ;;
+            discover_devices) discover_devices ;;
+            selftest) selftest ;;
+            catalog) catalog ;;
+            save_catalog) save_catalog "$payload" ;;
+            dns_status) dns_status ;;
+            dns_apply) dns_apply "$payload" ;;
+            diagnostics) diagnostics ;;
+            settings) settings ;;
+            save_settings) save_settings "$payload" ;;
+            apply)
+                if out="$(/usr/libexec/easyroute apply 2>&1)"; then reply 1 'Маршруты применены'; else reply 0 "$out"; fi
+                ;;
+            *) reply 0 'Неизвестная команда' ;;
+        esac
+        ;;
+esac
+
+ || return 1
+    done
+    return 0
+}
+
+save_catalog() {
+    json_load "$1"
+    json_get_var id id
+    json_get_var name name
+    json_get_var profile profile
+    json_get_var main_sites main_sites
+    json_get_var beta_sites beta_sites
+
+    name="$(printf '%s' "$name" | tr '\r\n' '  ' | cut -c1-80)"
+    [ -n "$name" ] || name='📦 Набор OpenCCK'
+
+    main_sites="$(printf '%s' "$main_sites" | tr ',\r\n\t' '    ' | xargs 2>/dev/null || true)"
+    beta_sites="$(printf '%s' "$beta_sites" | tr ',\r\n\t' '    ' | xargs 2>/dev/null || true)"
+    [ -n "$main_sites" ] || [ -n "$beta_sites" ] || {
+        reply 0 'Выберите хотя бы один сервис'
+        return
+    }
+    valid_site_list "$main_sites" || { reply 0 'Некорректный список основного каталога'; return; }
+    valid_site_list "$beta_sites" || { reply 0 'Некорректный список beta-каталога'; return; }
+
+    if [ -n "$profile" ] && [ "$profile" != '__default' ] &&
+       [ "$(uci -q get "easyroute.$profile" 2>/dev/null || true)" != 'vpn' ]; then
+        reply 0 'VPN-профиль не существует'
+        return
+    fi
+
+    is_new=0
+    if [ -z "$id" ]; then
+        is_new=1
+        base="r$(date +%s)_${PPID:-0}"
+        id="$base"
+        n=0
+        while uci -q get "easyroute.$id" >/dev/null 2>&1; do
+            n=$((n+1))
+            id="${base}_${n}"
+        done
+    fi
+    valid_id "$id" || { reply 0 'Некорректный ID'; return; }
+
+    cfgbak="/tmp/easyroute-catalog-config.$id.$"
+    listbak="/tmp/easyroute-catalog-list.$id.$"
+    cp -p /etc/config/easyroute "$cfgbak" 2>/dev/null || true
+    had_list=0
+    if [ -f "$LISTDIR/$id.txt" ]; then
+        cp -p "$LISTDIR/$id.txt" "$listbak"
+        had_list=1
+    fi
+
+    uci -q delete "easyroute.$id" 2>/dev/null || true
+    uci set "easyroute.$id=rule"
+    uci set "easyroute.$id.name=$name"
+    uci set "easyroute.$id.enabled=1"
+    uci set "easyroute.$id.source_type=catalog"
+    uci set "easyroute.$id.catalog_main_sites=$main_sites"
+    uci set "easyroute.$id.catalog_beta_sites=$beta_sites"
+    uci set "easyroute.$id.auto_update=1"
+    uci set "easyroute.$id.update_interval=86400"
+    [ -n "$profile" ] && [ "$profile" != '__default' ] &&
+        uci set "easyroute.$id.profile=$profile" || uci -q delete "easyroute.$id.profile"
+    uci commit easyroute
+
+    if out="$(/usr/libexec/easyroute-url-update one "$id" 2>&1)"; then
+        rm -f "$cfgbak" "$listbak"
+        reply 1 "Набор OpenCCK сохранён: $out"
+    else
+        [ -f "$cfgbak" ] && cp -p "$cfgbak" /etc/config/easyroute
+        if [ "$had_list" = '1' ]; then
+            mv "$listbak" "$LISTDIR/$id.txt"
+        else
+            rm -f "$LISTDIR/$id.txt" "$listbak"
+        fi
+        rm -f "$cfgbak" "$RUNDIR/$id.last" "$RUNDIR/$id.success" "$RUNDIR/$id.attempt" "$RUNDIR/$id.state" "$RUNDIR/$id.message"
+        /usr/libexec/easyroute apply >/dev/null 2>&1 || true
+        if [ "$is_new" = '1' ]; then
+            reply 0 "Не удалось создать набор OpenCCK: $out"
+        else
+            reply 0 "Изменения набора отменены: $out"
+        fi
+    fi
 }
 
 dns_status() {
