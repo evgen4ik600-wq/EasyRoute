@@ -650,9 +650,54 @@ discover_devices() {
     json_close_array; json_dump
 }
 
+dns_status() {
+    enabled="$(uci -q get easyroute.main.secure_dns 2>/dev/null || echo 0)"
+    provider="$(uci -q get easyroute.main.dns_provider 2>/dev/null || true)"
+    running=0; forward=0; healthy=0
+    pidof stubby >/dev/null 2>&1 && running=1
+    servers="$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)"
+    printf '%s\n' "$servers" | grep -Fq '127.0.0.1#5453' && forward=1
+    if [ "$enabled" = '1' ] && [ "$running" = '1' ] && [ "$forward" = '1' ] &&
+       [ "$(uci -q get dhcp.@dnsmasq[0].noresolv 2>/dev/null || echo 0)" = '1' ]; then
+        healthy=1
+    fi
+    json_init
+    json_add_boolean ok 1
+    json_add_boolean enabled "$enabled"
+    json_add_string provider "$provider"
+    json_add_boolean running "$running"
+    json_add_boolean forward "$forward"
+    json_add_boolean healthy "$healthy"
+    json_dump
+}
+
+dns_apply() {
+    json_load "$1"
+    json_get_var enabled enabled
+    json_get_var provider provider
+    case "$enabled" in 1|true) enabled=1 ;; *) enabled=0 ;; esac
+    case "$provider" in adguard|cloudflare|google|'') ;; *) reply 0 'Неизвестный DNS-провайдер'; return ;; esac
+    [ -x /usr/libexec/easyroute-dns ] || { reply 0 'DNS manager не установлен'; return; }
+
+    if [ "$enabled" = '1' ]; then
+        [ -n "$provider" ] || provider='adguard'
+        if out="$(/usr/libexec/easyroute-dns enable "$provider" 2>&1)"; then
+            reply 1 "$out"
+        else
+            reply 0 "$out"
+        fi
+    else
+        if out="$(/usr/libexec/easyroute-dns disable 2>&1)"; then
+            reply 1 "$out"
+        else
+            reply 0 "$out"
+        fi
+    fi
+}
+
 selftest() {
     iface="$(detect_iface)"
-    internet=0; vpn=0; firewall=0; dns=0; routing=0; updater=0; conflicts=0
+    internet=0; vpn=0; firewall=0; dns=0; routing=0; updater=0; conflicts=0; dot=1
     tmp="/tmp/easyroute-selftest.$$"
 
     nslookup openwrt.org 127.0.0.1 >/dev/null 2>&1 && dns=1
@@ -668,6 +713,15 @@ selftest() {
 
     fw4 -q check >/dev/null 2>&1 && firewall=1
     dnsmasq --test --conf-file=/etc/dnsmasq.conf >/dev/null 2>&1 || dns=0
+    if [ "$(uci -q get easyroute.main.secure_dns 2>/dev/null || echo 0)" = '1' ]; then
+        dot=0
+        if pidof stubby >/dev/null 2>&1 &&
+           printf '%s\n' "$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)" | grep -Fq '127.0.0.1#5453' &&
+           [ "$(uci -q get dhcp.@dnsmasq[0].noresolv 2>/dev/null || echo 0)" = '1' ] &&
+           [ "$dns" = '1' ]; then
+            dot=1
+        fi
+    fi
 
     expected=0; good=0; n=0
     ids="$(uci show easyroute 2>/dev/null | sed -n "s/^easyroute\.\([^.=]*\)=vpn$/\1/p")"
@@ -700,13 +754,13 @@ selftest() {
     fi
 
     all_ok=0
-    [ "$internet" = 1 ] && [ "$vpn" = 1 ] && [ "$firewall" = 1 ] && [ "$dns" = 1 ] && [ "$routing" = 1 ] && [ "$updater" = 1 ] && [ "$conflicts" = 0 ] && all_ok=1
+    [ "$internet" = 1 ] && [ "$vpn" = 1 ] && [ "$firewall" = 1 ] && [ "$dns" = 1 ] && [ "$routing" = 1 ] && [ "$updater" = 1 ] && [ "$conflicts" = 0 ] && [ "$dot" = 1 ] && all_ok=1
 
     json_init; json_add_boolean ok 1
     json_add_boolean internet "$internet"; json_add_boolean vpn "$vpn"
     json_add_boolean firewall "$firewall"; json_add_boolean dns "$dns"
     json_add_boolean routing "$routing"; json_add_boolean updater "$updater"
-    json_add_boolean conflicts "$conflicts"; json_add_boolean all_ok "$all_ok"
+    json_add_boolean dot "$dot"; json_add_boolean conflicts "$conflicts"; json_add_boolean all_ok "$all_ok"
     json_dump
 }
 
@@ -767,6 +821,8 @@ case "${1:-}" in
         json_add_object toggle_rule; json_add_string id String; json_add_boolean enabled Boolean; json_close_object
         json_add_object discover_devices; json_close_object
         json_add_object selftest; json_close_object
+        json_add_object dns_status; json_close_object
+        json_add_object dns_apply; json_add_boolean enabled Boolean; json_add_string provider String; json_close_object
         json_add_object diagnostics; json_close_object
         json_add_object settings; json_close_object
         json_add_object save_settings
@@ -805,6 +861,8 @@ case "${1:-}" in
             toggle_rule) toggle_rule "$payload" ;;
             discover_devices) discover_devices ;;
             selftest) selftest ;;
+            dns_status) dns_status ;;
+            dns_apply) dns_apply "$payload" ;;
             diagnostics) diagnostics ;;
             settings) settings ;;
             save_settings) save_settings "$payload" ;;
