@@ -23,7 +23,7 @@ if [ -f /etc/dnsmasq.conf ]; then
     rm -f /tmp/dnsmasq.conf.easyroute
 fi
 
-rm -f /usr/libexec/easyroute /usr/libexec/easyroute-url-update /usr/libexec/easyroute-dns /usr/libexec/rpcd/luci.easyroute /etc/init.d/easyroute /etc/hotplug.d/iface/95-easyroute
+rm -f /usr/libexec/easyroute /usr/libexec/easyroute-url-update /usr/libexec/easyroute-dns /usr/libexec/easyroute-catalog /usr/libexec/rpcd/luci.easyroute /etc/init.d/easyroute /etc/hotplug.d/iface/95-easyroute
 rm -f /usr/share/luci/menu.d/luci-app-easyroute.json /usr/share/rpcd/acl.d/luci-app-easyroute.json
 rm -rf /www/luci-static/resources/view/easyroute
 rm -f /etc/config/easyroute
