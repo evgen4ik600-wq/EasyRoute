@@ -100,7 +100,7 @@ jobs:
               "dot rpc": 'dns_status()' in rpc and 'dns_apply()' in rpc,
               "dot ui": 'Защищённый DNS (DoT)' in ui,
               "catalog main endpoint": 'https://iplist.opencck.org/' in catalog,
-              "catalog jshn nounset safe": 'set -u' not in catalog.split('. /usr/share/libubox/jshn.sh')[0],
+              "catalog jshn nounset safe": not any(line.strip() == 'set -u' for line in catalog.splitlines()[:catalog.splitlines().index('. /usr/share/libubox/jshn.sh')]),
               "catalog beta endpoint": 'https://beta.iplist.opencck.org/' in catalog,
               "catalog metadata transient": '/tmp/easyroute-catalog.$' in catalog and '/etc/easyroute/catalog' not in catalog,
               "catalog chunking": 'CHUNK_SITES=30' in catalog,
