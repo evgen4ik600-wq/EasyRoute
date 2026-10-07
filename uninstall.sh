@@ -1,6 +1,14 @@
 #!/bin/sh
 set -u
 
+# Если EasyRoute управлял DoT, сначала вернуть прежний DNS.
+if [ -x /usr/libexec/easyroute-dns ] && [ "$(uci -q get easyroute.main.secure_dns 2>/dev/null || echo 0)" = '1' ]; then
+    /usr/libexec/easyroute-dns disable >/dev/null 2>&1 || {
+        printf '%s\n' 'ОШИБКА: не удалось безопасно восстановить DNS. Удаление остановлено.' >&2
+        exit 1
+    }
+fi
+
 /usr/libexec/easyroute route-down >/dev/null 2>&1 || true
 /etc/init.d/easyroute disable >/dev/null 2>&1 || true
 
@@ -15,7 +23,7 @@ if [ -f /etc/dnsmasq.conf ]; then
     rm -f /tmp/dnsmasq.conf.easyroute
 fi
 
-rm -f /usr/libexec/easyroute /usr/libexec/easyroute-url-update /usr/libexec/rpcd/luci.easyroute /etc/init.d/easyroute /etc/hotplug.d/iface/95-easyroute
+rm -f /usr/libexec/easyroute /usr/libexec/easyroute-url-update /usr/libexec/easyroute-dns /usr/libexec/rpcd/luci.easyroute /etc/init.d/easyroute /etc/hotplug.d/iface/95-easyroute
 rm -f /usr/share/luci/menu.d/luci-app-easyroute.json /usr/share/rpcd/acl.d/luci-app-easyroute.json
 rm -rf /www/luci-static/resources/view/easyroute
 rm -f /etc/config/easyroute
