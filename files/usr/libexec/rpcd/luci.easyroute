@@ -366,8 +366,16 @@ profiles() {
     if [ -z "$(uci show easyroute 2>/dev/null | sed -n "s/^easyroute\.\([^.=]*\)=vpn$/\1/p")" ]; then
         id='__default'
         iface="$(detect_iface)"
-        up=0; iface_status=''
-        command -v awg >/dev/null 2>&1 && awg show "$iface" >/dev/null 2>&1 && up=1
+        up=0; hs=''
+        out="$(ifstatus "$iface" 2>/dev/null || true)"
+        [ -n "$out" ] || out="$(ubus call "network.interface.$iface" status 2>/dev/null || true)"
+        state="$(printf '%s' "$out" | jsonfilter -e '@.up' 2>/dev/null || true)"
+        [ "$state" = 'true' ] && up=1
+        if [ "$up" = '0' ] && ip link show "$iface" >/dev/null 2>&1; then up=1; fi
+        if command -v awg >/dev/null 2>&1; then
+            ts="$(awg show "$iface" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}')"
+            case "$ts" in ''|0) : ;; *) now="$(date +%s)"; hs="$((now-ts))"; up=1 ;; esac
+        fi
         json_add_object ''
         json_add_string id "$id"
         json_add_string name 'Основной AWG'
@@ -376,12 +384,21 @@ profiles() {
         json_add_int table 166
         json_add_boolean enabled 1
         json_add_boolean up "$up"
+        json_add_string handshake_age "$hs"
         json_close_object
     else
         for id in $(uci show easyroute 2>/dev/null | sed -n "s/^easyroute\.\([^.=]*\)=vpn$/\1/p"); do
             iface="$(uci -q get "easyroute.$id.interface" 2>/dev/null || true)"
-            up=0
-            command -v awg >/dev/null 2>&1 && awg show "$iface" >/dev/null 2>&1 && up=1
+            up=0; hs=''
+            out="$(ifstatus "$iface" 2>/dev/null || true)"
+            [ -n "$out" ] || out="$(ubus call "network.interface.$iface" status 2>/dev/null || true)"
+            state="$(printf '%s' "$out" | jsonfilter -e '@.up' 2>/dev/null || true)"
+            [ "$state" = 'true' ] && up=1
+            if [ "$up" = '0' ] && ip link show "$iface" >/dev/null 2>&1; then up=1; fi
+            if command -v awg >/dev/null 2>&1; then
+                ts="$(awg show "$iface" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}')"
+                case "$ts" in ''|0) : ;; *) now="$(date +%s)"; hs="$((now-ts))"; up=1 ;; esac
+            fi
             json_add_object ''
             json_add_string id "$id"
             json_add_string name "$(uci -q get "easyroute.$id.name" 2>/dev/null || echo "$id")"
@@ -390,6 +407,7 @@ profiles() {
             json_add_int table "$(uci -q get "easyroute.$id.table" 2>/dev/null || echo 166)"
             json_add_boolean enabled "$(uci -q get "easyroute.$id.enabled" 2>/dev/null || echo 1)"
             json_add_boolean up "$up"
+            json_add_string handshake_age "$hs"
             json_close_object
         done
     fi
