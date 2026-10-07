@@ -411,6 +411,12 @@ save_profile() {
     [ -n "$interface" ] || { reply 0 'Укажите интерфейс AmneziaWG'; return; }
 
     printf '%s' "$mark" | grep -Eq '^(0x[0-9A-Fa-f]+|[0-9]+)$' || { reply 0 'Некорректный mark'; return; }
+    mark_dec=$((mark))
+    [ "$mark_dec" -ge 1 ] 2>/dev/null && [ "$mark_dec" -le 255 ] 2>/dev/null || {
+        reply 0 'fwmark должен быть в диапазоне 1..255'
+        return
+    }
+    mark="$(printf '0x%x' "$mark_dec")"
     case "$table" in ''|*[!0-9]*) reply 0 'Некорректная таблица'; return ;; esac
     [ "$table" -ge 1 ] 2>/dev/null && [ "$table" -le 252 ] 2>/dev/null || { reply 0 'Таблица должна быть 1..252'; return; }
 
