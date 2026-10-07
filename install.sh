@@ -2,7 +2,7 @@
 set -eu
 
 VERSION='1.2.20'
-REPO_REF='2b22abfa27dd89b24f0bd71348432bb6427a129b'
+REPO_REF='e4ebe581e78d6a1a40c8912cb5c38d3391f0f12a'
 REPO_BASE="https://raw.githubusercontent.com/evgen4ik600-wq/EasyRoute/$REPO_REF"
 AWG_INSTALL_URL='https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/03b62269e2edc168504f057cffaafda11b25ed92/amneziawg-install.sh'
 TMP="/tmp/easyroute-install.$$"
