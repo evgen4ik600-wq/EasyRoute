@@ -37,6 +37,10 @@ jobs:
           dash -n files/etc/init.d/easyroute
           dash -n files/etc/hotplug.d/iface/95-easyroute
 
+      - name: Shellcheck critical errors
+        run: |
+          shellcheck -S error -e SC1091             install.sh easyroute-install.sh uninstall.sh             files/usr/libexec/easyroute             files/usr/libexec/easyroute-url-update             files/usr/libexec/easyroute-dns             files/usr/libexec/easyroute-catalog             files/usr/libexec/rpcd/luci.easyroute             files/etc/init.d/easyroute             files/etc/hotplug.d/iface/95-easyroute
+
       - name: JSON syntax
         run: |
           python3 -m json.tool files/usr/share/luci/menu.d/luci-app-easyroute.json >/dev/null
@@ -44,7 +48,7 @@ jobs:
 
       - name: LuCI JavaScript syntax
         run: |
-          node -e "new Function(require('fs').readFileSync('files/www/luci-static/resources/view/easyroute/routes-v110.js','utf8'))"
+          node -e "new Function(require('fs').readFileSync('files/www/luci-static/resources/view/easyroute/routes-v1216.js','utf8'))"
 
       - name: Installer references
         run: |
@@ -54,8 +58,8 @@ jobs:
           grep -Fq 'files/usr/libexec/easyroute-url-update' install.sh
           grep -Fq 'files/usr/libexec/easyroute-dns' install.sh
           grep -Fq 'files/usr/libexec/easyroute-catalog' install.sh
-          grep -Fq 'files/www/luci-static/resources/view/easyroute/routes-v110.js' install.sh
-          grep -Fq '"path": "easyroute/routes-v110"' files/usr/share/luci/menu.d/luci-app-easyroute.json
+          grep -Fq 'files/www/luci-static/resources/view/easyroute/routes-v1216.js' install.sh
+          grep -Fq '"path": "easyroute/routes-v1216"' files/usr/share/luci/menu.d/luci-app-easyroute.json
           ! grep -Rq 'openwrt-simple-ui\|clientnames/' install.sh easyroute-install.sh files
           ! grep -Rq 'openwrt-easyroute-install.sh' install.sh easyroute-install.sh files
 
@@ -68,8 +72,10 @@ jobs:
           dnsman = Path('files/usr/libexec/easyroute-dns').read_text()
           catalog = Path('files/usr/libexec/easyroute-catalog').read_text()
           rpc = Path('files/usr/libexec/rpcd/luci.easyroute').read_text()
-          ui = Path('files/www/luci-static/resources/view/easyroute/routes-v110.js').read_text()
+          ui = Path('files/www/luci-static/resources/view/easyroute/routes-v1216.js').read_text()
           hotplug = Path('files/etc/hotplug.d/iface/95-easyroute').read_text()
+          installer = Path('install.sh').read_text()
+          uninstaller = Path('uninstall.sh').read_text()
           checks = {
               "rule id enumerator": 'list_rule_ids()' in engine,
               "fw4 rollback": 'fw4 check' in engine and 'rollback_generated' in engine,
@@ -102,6 +108,20 @@ jobs:
               "catalog rpc": 'catalog()' in rpc and 'save_catalog()' in rpc,
               "catalog ui": 'Каталог OpenCCK' in ui and 'callSaveCatalog' in ui,
               "catalog edit avoids payload": "if [ \"$source_type\" = 'catalog' ]" in rpc,
+              "unique updater temp": 'easyroute-url.$id.$' in updater and 'easyroute-url.$id.$"' not in updater,
+              "unique manual temp": '.$id.tmp.$' in rpc and '.$id.tmp.$"' not in rpc,
+              "updater serialized": "easyroute-url-update.lock" in updater and "acquire_lock" in updater,
+              "engine serialized": "easyroute-engine.lock" in engine and "acquire_lock" in engine,
+              "success only after apply": "Updated and applied" in updater and "waiting for apply" in updater,
+              "routing table ownership": "table_conflict()" in engine and "Конфликт IPv4 routing table" in engine,
+              "IPv6 input sanitized": "^[0-9A-Fa-f:]+$" in engine and "b[2]+0<=128" in engine,
+              "profile old routes cleanup": "старые маршруты профиля" in rpc and "маршруты удаляемого профиля" in rpc,
+              "fwmark bounded": "fwmark должен быть в диапазоне 1..255" in rpc,
+              "cache busted UI": "EasyRoute 1.2.16" in ui,
+              "installer unique temp": 'easyroute-install.$' in installer and 'easyroute-cron.$' in installer,
+              "uninstaller unique temp": 'easyroute-cron.$' in uninstaller and 'dnsmasq.conf.easyroute.$' in uninstaller,
+              "transactional payload upgrade": 'previous' in installer and 'предыдущая версия восстановлена' in installer,
+              "version after apply": installer.find('printf \'%s\\n\' "$VERSION" > /etc/easyroute/version') > installer.find('/usr/libexec/easyroute apply'),
               "hotplug never adopts vpn": 'uci set "easyroute.main.interface=' not in hotplug,
           }
           failed = [name for name, ok in checks.items() if not ok]
