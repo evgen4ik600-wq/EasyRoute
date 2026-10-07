@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION='1.2.6'
+VERSION='1.2.16'
 REPO_REF='70d2d0c3f24e31a71dc643022390163b966304f1'
 REPO_BASE="https://raw.githubusercontent.com/evgen4ik600-wq/EasyRoute/$REPO_REF"
 AWG_INSTALL_URL='https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/03b62269e2edc168504f057cffaafda11b25ed92/amneziawg-install.sh'
@@ -119,7 +119,7 @@ grep -q '"admin/network/easyroute"' "$TMP/files/usr/share/luci/menu.d/luci-app-e
 grep -q '"luci-app-easyroute"' "$TMP/files/usr/share/rpcd/acl.d/luci-app-easyroute.json" || fail 'Повреждён ACL.'
 
 mkdir -p /etc/easyroute/lists "$BACKUP"
-printf '%s\n' "$VERSION" > /etc/easyroute/version
+chmod 0700 /etc/easyroute /etc/easyroute/lists "$BACKUP" 2>/dev/null || true
 if [ ! -f "$BACKUP/.created" ]; then
     cp -p /etc/dnsmasq.conf "$BACKUP/dnsmasq.conf" 2>/dev/null || true
     cp -p /etc/config/firewall "$BACKUP/firewall" 2>/dev/null || true
@@ -133,7 +133,6 @@ for f in $FILES; do
     mkdir -p "$(dirname "$dst")"
     cp "$TMP/$f" "$dst"
 done
-rm -f /www/luci-static/resources/view/easyroute/routes-v110.js /www/luci-static/resources/view/easyroute/routes-v120.js 2>/dev/null || true
 chmod 0755 /usr/libexec/easyroute /usr/libexec/easyroute-url-update /usr/libexec/easyroute-dns /usr/libexec/easyroute-catalog /usr/libexec/rpcd/luci.easyroute /etc/init.d/easyroute /etc/hotplug.d/iface/95-easyroute
 
 if [ ! -f /etc/config/easyroute ]; then
@@ -180,6 +179,9 @@ if ! out="$(/usr/libexec/easyroute apply 2>&1)"; then
     printf '%s\n' "$out" >&2
     fail 'Файлы установлены, но первичная проверка/применение не прошла.'
 fi
+
+printf '%s\n' "$VERSION" > /etc/easyroute/version
+rm -f /www/luci-static/resources/view/easyroute/routes-v110.js       /www/luci-static/resources/view/easyroute/routes-v120.js       /www/luci-static/resources/view/easyroute/routes-v126.js 2>/dev/null || true
 
 FREE2="$(df -k /overlay 2>/dev/null | awk 'NR==2{print $4}')"
 [ -n "$FREE2" ] || FREE2="$(df -k / 2>/dev/null | awk 'NR==2{print $4}')"
