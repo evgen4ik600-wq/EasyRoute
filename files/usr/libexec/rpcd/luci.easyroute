@@ -373,30 +373,108 @@ save_profile() {
     json_get_var mark mark
     json_get_var table table
     json_get_var enabled enabled
+
     name="$(printf '%s' "$name" | tr '\r\n' ' ' | cut -c1-80)"
     [ -n "$name" ] || { reply 0 'Укажите название VPN'; return; }
     [ -n "$interface" ] || { reply 0 'Укажите интерфейс AmneziaWG'; return; }
-    printf '%s' "$mark" | grep -Eq '^(0x[0-9A-Fa-f]+|[0-9]+)
+
+    printf '%s' "$mark" | grep -Eq '^(0x[0-9A-Fa-f]+|[0-9]+)$' || { reply 0 'Некорректный mark'; return; }
+    case "$table" in ''|*[!0-9]*) reply 0 'Некорректная таблица'; return ;; esac
+    [ "$table" -ge 1 ] 2>/dev/null && [ "$table" -le 252 ] 2>/dev/null || { reply 0 'Таблица должна быть 1..252'; return; }
+
+    proto="$(uci -q get "network.$interface.proto" 2>/dev/null || true)"
+    if [ "$proto" != 'amneziawg' ] && ! awg show "$interface" >/dev/null 2>&1; then
+        reply 0 'Интерфейс не является AmneziaWG'
+        return
+    fi
+
+    [ "$enabled" = 0 ] && enabled=0 || enabled=1
+
+    if [ -z "$id" ] || [ "$id" = '__default' ]; then
+        base="v$(date +%s)_${PPID:-0}"
+        id="$base"
+        n=0
+        while uci -q get "easyroute.$id" >/dev/null 2>&1; do
+            n=$((n+1))
+            id="${base}_${n}"
+        done
+    fi
+    valid_id "$id" || { reply 0 'Некорректный ID'; return; }
+
+    for other in $(uci show easyroute 2>/dev/null | sed -n "s/^easyroute\.\([^.=]*\)=vpn$/\1/p"); do
+        [ "$other" = "$id" ] && continue
+        [ "$(uci -q get "easyroute.$other.mark" 2>/dev/null || true)" = "$mark" ] && {
+            reply 0 'Этот fwmark уже используется другим VPN-профилем'
+            return
+        }
+        [ "$(uci -q get "easyroute.$other.table" 2>/dev/null || true)" = "$table" ] && {
+            reply 0 'Эта routing table уже используется другим VPN-профилем'
+            return
+        }
+    done
+
+    cfgbak="/tmp/easyroute-profile.$id.$$"
+    cp -p /etc/config/easyroute "$cfgbak"
+
     uci set "easyroute.$id=vpn"
     uci set "easyroute.$id.name=$name"
     uci set "easyroute.$id.interface=$interface"
     uci set "easyroute.$id.mark=$mark"
     uci set "easyroute.$id.table=$table"
     uci set "easyroute.$id.enabled=$enabled"
-    if [ -z "$(uci -q get easyroute.main.profile 2>/dev/null || true)" ]; then uci set "easyroute.main.profile=$id"; fi
+    if [ -z "$(uci -q get easyroute.main.profile 2>/dev/null || true)" ]; then
+        uci set "easyroute.main.profile=$id"
+    fi
     uci commit easyroute
-    if out="$(/usr/libexec/easyroute apply 2>&1)"; then reply 1 'VPN-профиль сохранён и применён'; else reply 0 "$out"; fi
+
+    if out="$(/usr/libexec/easyroute apply 2>&1)"; then
+        rm -f "$cfgbak"
+        reply 1 'VPN-профиль сохранён и применён'
+    else
+        cp -p "$cfgbak" /etc/config/easyroute
+        rm -f "$cfgbak"
+        /usr/libexec/easyroute apply >/dev/null 2>&1 || true
+        reply 0 "Изменения VPN-профиля отменены: $out"
+    fi
 }
 
 delete_profile() {
-    json_load "$1"; json_get_var id id
+    json_load "$1"
+    json_get_var id id
     valid_id "$id" || { reply 0 'Некорректный ID'; return; }
-    [ "$(uci -q get "easyroute.$id" 2>/dev/null || true)" = vpn ] || { reply 0 'Профиль не найден'; return; }
+    [ "$(uci -q get "easyroute.$id" 2>/dev/null || true)" = 'vpn' ] || { reply 0 'Профиль не найден'; return; }
+
+    for rid in $(rule_ids); do
+        [ "$(uci -q get "easyroute.$rid.profile" 2>/dev/null || true)" = "$id" ] && {
+            reply 0 'VPN-профиль используется правилами. Сначала переназначьте их.'
+            return
+        }
+    done
+    for did in $(device_ids); do
+        [ "$(uci -q get "easyroute.$did.profile" 2>/dev/null || true)" = "$id" ] && {
+            reply 0 'VPN-профиль используется устройствами. Сначала переназначьте их.'
+            return
+        }
+    done
+
+    cfgbak="/tmp/easyroute-profile-delete.$id.$$"
+    cp -p /etc/config/easyroute "$cfgbak"
+
     uci -q delete "easyroute.$id" 2>/dev/null || true
-    if [ "$(uci -q get easyroute.main.profile 2>/dev/null || true)" = "$id" ]; then uci -q delete easyroute.main.profile; fi
+    if [ "$(uci -q get easyroute.main.profile 2>/dev/null || true)" = "$id" ]; then
+        uci -q delete easyroute.main.profile
+    fi
     uci commit easyroute
-    /usr/libexec/easyroute apply >/dev/null 2>&1 || true
-    reply 1 'VPN-профиль удалён'
+
+    if out="$(/usr/libexec/easyroute apply 2>&1)"; then
+        rm -f "$cfgbak"
+        reply 1 'VPN-профиль удалён'
+    else
+        cp -p "$cfgbak" /etc/config/easyroute
+        rm -f "$cfgbak"
+        /usr/libexec/easyroute apply >/dev/null 2>&1 || true
+        reply 0 "Удаление VPN-профиля отменено: $out"
+    fi
 }
 
 devices() {
