@@ -17,66 +17,135 @@ var callUpdate=rpc.declare({object:'luci.easyroute',method:'update_rule',params:
 var callSaveDevice=rpc.declare({object:'luci.easyroute',method:'save_device',params:['id','name','mac','profile','enabled'],expect:{}});
 var callDeleteDevice=rpc.declare({object:'luci.easyroute',method:'delete_device',params:['id'],expect:{}});
 var callDiag=rpc.declare({object:'luci.easyroute',method:'diagnostics',expect:{}});
+var callCatalog=rpc.declare({object:'luci.easyroute',method:'catalog',expect:{}});
+var callSaveCatalog=rpc.declare({object:'luci.easyroute',method:'save_catalog',params:['id','name','profile','main_sites','beta_sites'],expect:{}});
 var callDnsStatus=rpc.declare({object:'luci.easyroute',method:'dns_status',expect:{}});
 var callDnsApply=rpc.declare({object:'luci.easyroute',method:'dns_apply',params:['enabled','provider'],expect:{}});
 
-var SERVICES=[
- ['📺','YouTube','youtube.com'],['✈️','Telegram','telegram.org'],['🤖','ChatGPT / OpenAI','openai.com'],
- ['📸','Instagram','instagram.com'],['🎮','Discord','discord.com'],['🎵','TikTok','tiktok.com'],
- ['🎬','Twitch','twitch.tv'],['🎧','Spotify','spotify.com'],['🧠','Claude','anthropic.com'],['👥','Facebook','facebook.com']
-];
-function notify(r){ui.addNotification(null,E('p',{},(r&&r.message)||((r&&r.ok)?'Готово':'Ошибка')),(r&&r.ok)?'info':'error');}
-function bytes(n){n=Number(n||0);if(n>1073741824)return(n/1073741824).toFixed(1)+' ГБ';if(n>1048576)return(n/1048576).toFixed(1)+' МБ';if(n>1024)return(n/1024).toFixed(0)+' КБ';return n+' Б';}
-function ago(v){v=Number(v||0);if(!v)return 'нет handshake';if(v<60)return v+' сек. назад';if(v<3600)return Math.floor(v/60)+' мин. назад';return Math.floor(v/3600)+' ч. назад';}
-function closeBtn(){return E('button',{class:'btn',type:'button',style:'font-size:22px;min-width:42px',click:ui.hideModal,title:'Закрыть'},'✕');}
-function profileSelect(ps,val){var a=ps.map(function(p){return E('option',{value:p.id},(p.up?'🟢 ':'🔴 ')+p.name);});var s=E('select',{class:'cbi-input-select',style:'width:100%;max-width:520px'},a);s.value=val||((ps[0]||{}).id||'');return s;}
-function refresh(){window.location.reload();}
-function manualEditor(rule,ps){
- rule=rule||{id:'',name:'',content:'',source_type:'manual',source_url:'',profile:'',enabled:true};
- var name=E('input',{class:'cbi-input-text',style:'width:100%',value:rule.name||'',placeholder:'Например: Мой сайт'});
- var prof=profileSelect(ps,rule.profile);var url=E('input',{class:'cbi-input-text',style:'width:100%',value:rule.source_url||'',placeholder:'https://...'});
- var txt=E('textarea',{class:'cbi-input-textarea',style:'width:100%;min-height:190px',placeholder:'example.com\n1.2.3.0/24'},[rule.content||'']);
- var source=E('select',{class:'cbi-input-select'},[E('option',{value:'url'},'🔗 Ссылка на список'),E('option',{value:'manual'},'📝 Вставить вручную')]);source.value=rule.source_type==='url'?'url':'manual';
- var boxUrl=E('div',{},[E('p',{},'🔗 Адрес списка'),url]);var boxTxt=E('div',{},[E('p',{},'📝 Домены или IP — по одному в строке'),txt]);
- function sync(){boxUrl.style.display=source.value==='url'?'':'none';boxTxt.style.display=source.value==='manual'?'':'none';}source.addEventListener('change',sync);sync();
- var save=E('button',{class:'btn cbi-button cbi-button-action',type:'button'},'💾 Сохранить');
- save.addEventListener('click',function(){save.disabled=true;callSave(rule.id||'',name.value.trim(),true,txt.value,source.value,url.value.trim(),true,'86400',prof.value).then(function(r){notify(r);if(r.ok){ui.hideModal();setTimeout(refresh,500);}else save.disabled=false;}).catch(function(e){notify({ok:false,message:e.message});save.disabled=false;});});
- ui.showModal((rule.id?'✏️ Изменить':'➕ Добавить')+' маршрут',[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('div',{class:'cbi-section'},[
-  E('p',{},'🏷️ Название'),name,E('p',{},'🛡️ Через какой VPN'),prof,E('p',{},'📦 Откуда брать адреса'),source,boxUrl,boxTxt
- ]),E('div',{class:'right'},[E('button',{class:'btn',type:'button',click:ui.hideModal},'↩️ Отмена'),' ',save])]);
-}
-function serviceCatalog(ps){
- var q=E('input',{class:'cbi-input-text',style:'width:100%;margin-bottom:12px',placeholder:'🔎 Найти приложение...'});
- var list=E('div');
- function draw(){
-  list.innerHTML='';var needle=q.value.toLowerCase();
-  SERVICES.filter(function(x){return x[1].toLowerCase().indexOf(needle)>=0;}).forEach(function(x){
-   var b=E('button',{class:'btn cbi-button cbi-button-action',type:'button'},'➕ Добавить');
-   b.addEventListener('click',function(){serviceSetup(x,ps);});
-   list.appendChild(E('div',{style:'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 4px;border-bottom:1px solid #666'},[
-    E('div',{},[E('span',{style:'font-size:25px;margin-right:10px'},x[0]),E('strong',{},x[1]),E('div',{style:'font-size:12px;opacity:.65;margin-left:40px'},x[2])]),b
-   ]));
+function catalogEditor(ps,rule){
+ rule=rule||{id:'',name:'',profile:'',catalog_main_sites:'',catalog_beta_sites:''};
+ ui.showModal('🧩 Каталог OpenCCK',[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('p',{},'⏳ Загружаю каталоги OpenCCK...')]);
+
+ callCatalog().then(function(r){
+  if(!r.ok)throw new Error(r.message||'Не удалось загрузить каталог');
+
+  var main={},beta={};
+  try{main=JSON.parse(r.main_json||'{}');}catch(e){main={};}
+  try{beta=JSON.parse(r.beta_json||'{}');}catch(e){beta={};}
+
+  var map={};
+  Object.keys(main).forEach(function(site){
+   map[site]={site:site,group:String(main[site]||'other'),source:'main'};
   });
- }q.addEventListener('input',draw);draw();
- ui.showModal('🧩 Добавить приложение',[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('p',{},'Выберите сервис — EasyRoute сам добавит домены и IP-сети. Никаких CIDR вручную 🙂'),q,list,E('div',{style:'margin-top:16px'},[E('button',{class:'btn',type:'button',click:function(){ui.hideModal();manualEditor(null,ps);}},'🛠️ Не нашли? Добавить вручную')])]);
-}
-function serviceSetup(x,ps){
- var prof=profileSelect(ps,'');var add=E('button',{class:'btn cbi-button cbi-button-action',type:'button'},'🚀 Добавить и включить');
- add.addEventListener('click',function(){
-  add.disabled=true;var base='https://iplist.opencck.org/?format=text&site='+encodeURIComponent(x[2]);
-  callSave('',x[0]+' '+x[1]+' · домены',true,'','url',base+'&data=domains&wildcard=1',true,'86400',prof.value).then(function(a){
-   if(!a.ok)throw new Error(a.message||'Не удалось добавить домены');
-   return callSave('',x[0]+' '+x[1]+' · IP',true,'','url',base+'&data=cidr4',true,'86400',prof.value).then(function(b){
-    if(b.ok)notify({ok:true,message:'✅ Сервис добавлен: домены + IP/CIDR.'});
-    else notify({ok:true,message:'✅ Домены добавлены. ℹ️ IP/CIDR-список для этого сервиса сейчас недоступен — используем маршрутизацию по доменам.'});
-    ui.hideModal();setTimeout(refresh,600);
+  Object.keys(beta).forEach(function(site){
+   if(map[site]) map[site].source='both';
+   else map[site]={site:site,group:String(beta[site]||'other'),source:'beta'};
+  });
+
+  var entries=Object.keys(map).map(function(k){return map[k];}).sort(function(a,b){
+   return a.group.localeCompare(b.group)||a.site.localeCompare(b.site);
+  });
+  if(!entries.length)throw new Error('OpenCCK вернул пустой каталог');
+
+  var selected={};
+  String(rule.catalog_main_sites||'').split(/\s+/).filter(Boolean).forEach(function(x){selected[x]=true;});
+  String(rule.catalog_beta_sites||'').split(/\s+/).filter(Boolean).forEach(function(x){selected[x]=true;});
+
+  var name=E('input',{class:'cbi-input-text',style:'width:100%',value:rule.name||'',placeholder:'Например: Мои сервисы'});
+  var prof=profileSelect(ps,rule.profile||'');
+  var q=E('input',{class:'cbi-input-text',style:'width:100%',placeholder:'🔎 Поиск: chatgpt, instagram, ai...'});
+  var groups=[''].concat(Array.from(new Set(entries.map(function(x){return x.group;}))).sort());
+  var groupSel=E('select',{class:'cbi-input-select',style:'width:100%;max-width:520px'},groups.map(function(g){
+   return E('option',{value:g},g?'📁 '+g:'Все категории');
+  }));
+  var sourceSel=E('select',{class:'cbi-input-select'},[
+   E('option',{value:'all'},'Основной + Beta'),
+   E('option',{value:'main'},'Основной'),
+   E('option',{value:'beta'},'Beta')
+  ]);
+  var list=E('div',{style:'max-height:48vh;overflow:auto;border-top:1px solid #666;margin-top:10px'});
+  var counter=E('strong',{},'0');
+  var selectVisible=E('button',{class:'btn cbi-button',type:'button'},'☑ Выбрать показанные');
+
+  function sourceMatches(x){
+   if(sourceSel.value==='all')return true;
+   if(sourceSel.value==='main')return x.source==='main'||x.source==='both';
+   return x.source==='beta'||x.source==='both';
+  }
+  function visibleEntries(){
+   var needle=q.value.trim().toLowerCase(),g=groupSel.value;
+   return entries.filter(function(x){
+    return (!g||x.group===g)&&sourceMatches(x)&&(!needle||x.site.toLowerCase().indexOf(needle)>=0||x.group.toLowerCase().indexOf(needle)>=0);
    });
-  }).catch(function(e){notify({ok:false,message:e.message});add.disabled=false;});
+  }
+  function updateCounter(){
+   var n=Object.keys(selected).filter(function(k){return selected[k];}).length;
+   counter.textContent=String(n);
+  }
+  function draw(){
+   list.innerHTML='';
+   var vis=visibleEntries();
+   vis.forEach(function(x){
+    var cb=E('input',{type:'checkbox'});cb.checked=!!selected[x.site];
+    cb.addEventListener('change',function(){selected[x.site]=cb.checked;updateCounter();});
+    var badge=x.source==='main'?'основной':(x.source==='beta'?'beta':'основной+beta');
+    list.appendChild(E('label',{style:'display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid #555;cursor:pointer'},[
+     cb,E('span',{style:'flex:1'},[E('strong',{},x.site),E('span',{style:'font-size:11px;opacity:.65;margin-left:8px'},'📁 '+x.group)]),
+     E('span',{style:'font-size:11px;opacity:.65'},badge)
+    ]));
+   });
+   if(!vis.length)list.appendChild(E('p',{},'Ничего не найдено'));
+   updateCounter();
+  }
+  q.addEventListener('input',draw);groupSel.addEventListener('change',draw);sourceSel.addEventListener('change',draw);
+  selectVisible.addEventListener('click',function(){
+   var vis=visibleEntries(),all=vis.length&&vis.every(function(x){return selected[x.site];});
+   vis.forEach(function(x){selected[x.site]=!all;});
+   selectVisible.textContent=all?'☑ Выбрать показанные':'☐ Снять показанные';
+   draw();
+  });
+
+  var save=E('button',{class:'btn cbi-button cbi-button-action',type:'button'},'🚀 Скачать выбранное и включить');
+  save.addEventListener('click',function(){
+   var chosen=entries.filter(function(x){return selected[x.site];});
+   if(!chosen.length){notify({ok:false,message:'Выберите хотя бы один сервис'});return;}
+   var mainSites=[],betaSites=[];
+   chosen.forEach(function(x){
+    if(x.source==='main'||x.source==='both')mainSites.push(x.site);
+    else betaSites.push(x.site);
+   });
+   var nm=name.value.trim();
+   if(!nm){
+    var gs=Array.from(new Set(chosen.map(function(x){return x.group;})));
+    nm=gs.length===1?'📦 '+gs[0]+' · '+chosen.length:'📦 OpenCCK · '+chosen.length+' сервисов';
+   }
+   save.disabled=true;
+   callSaveCatalog(rule.id||'',nm,prof.value,mainSites.join(' '),betaSites.join(' ')).then(function(x){
+    notify(x);
+    if(x.ok){ui.hideModal();setTimeout(refresh,600);}else save.disabled=false;
+   }).catch(function(e){notify({ok:false,message:e.message});save.disabled=false;});
+  });
+
+  ui.showModal('🧩 Каталог OpenCCK',[
+   E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),
+   E('p',{},[
+    'Каталог загружается только при открытии этого окна и не сохраняется во flash. ',
+    'На роутер скачиваются только списки выбранных сервисов после нажатия кнопки ниже.'
+   ]),
+   E('p',{},[(r.main_ok?'✅ ':'❌ ')+'Основной каталог · '+(r.beta_ok?'✅ ':'❌ ')+'Beta-каталог']),
+   E('p',{},'🏷️ Название'),name,
+   E('p',{},['🛡️ Через какой VPN ']),prof,
+   E('div',{style:'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px'},[q,groupSel,sourceSel]),
+   E('p',{},['Выбрано: ',counter,' сервисов · всего в объединённом каталоге: '+entries.length]),
+   selectVisible,
+   list,
+   E('div',{class:'right',style:'margin-top:14px'},[
+    E('button',{class:'btn',type:'button',click:ui.hideModal},'↩️ Отмена'),' ',save
+   ])
+  ]);
+ }).catch(function(e){
+  ui.showModal('🧩 Каталог OpenCCK',[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('p',{},'❌ '+e.message)]);
  });
- ui.showModal(x[0]+' '+x[1],[E('div',{style:'display:flex;justify-content:flex-end'},closeBtn()),E('div',{class:'cbi-section'},[
-  E('h3',{},'Что сделает EasyRoute?'),E('p',{},'🌐 Добавит домены\n📡 Добавит IP-сети\n🔄 Будет обновлять их каждые 24 часа\n🛡️ Направит через выбранный VPN'),
-  E('p',{},'Выберите VPN'),prof
- ]),E('div',{class:'right'},[E('button',{class:'btn',type:'button',click:ui.hideModal},'↩️ Отмена'),' ',add])]);
 }
 function devicePicker(ps){
  callDiscover().then(function(r){
@@ -103,14 +172,14 @@ return view.extend({
   var apps=E('div',{class:'cbi-section'},[E('h3',{},'🧩 Приложения и сайты'),E('p',{},'Что должно идти через VPN')]);
   rules.forEach(function(r){
    var sw=E('input',{type:'checkbox'});sw.checked=r.enabled!==false;sw.addEventListener('change',function(){sw.disabled=true;callToggle(r.id,sw.checked).then(function(x){notify(x);if(!x.ok)sw.checked=!sw.checked;sw.disabled=false;});});
-   var edit=E('button',{class:'btn cbi-button',type:'button'},'✏️');edit.addEventListener('click',function(){callGet(r.id).then(function(x){if(x.ok)manualEditor(x,ps);});});
+   var edit=E('button',{class:'btn cbi-button',type:'button'},'✏️');edit.addEventListener('click',function(){callGet(r.id).then(function(x){if(x.ok){if(x.source_type==='catalog')catalogEditor(ps,x);else manualEditor(x,ps);}});});
    var del=E('button',{class:'btn cbi-button cbi-button-remove',type:'button'},'🗑️');del.addEventListener('click',function(){if(confirm('Удалить «'+r.name+'»?'))callDelete(r.id).then(function(x){notify(x);if(x.ok)setTimeout(refresh,350);});});
    apps.appendChild(E('div',{style:'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 2px;border-bottom:1px solid #666'},[
-    E('div',{},[E('strong',{},r.name),E('div',{style:'font-size:12px;opacity:.65'},'📦 '+r.count+' записей · 🔄 '+(r.source_type==='url'?'авто':'вручную'))]),
+    E('div',{},[E('strong',{},r.name),E('div',{style:'font-size:12px;opacity:.65'},'📦 '+r.count+' записей · '+(r.source_type==='catalog'?'🧩 '+(r.site_count||0)+' сервисов · 🔄 каталог':('🔄 '+(r.source_type==='url'?'авто':'вручную'))))]),
     E('div',{},[sw,' ',edit,' ',del])
    ]));
   });
-  apps.appendChild(E('p',{},[E('button',{class:'btn cbi-button cbi-button-action',type:'button',click:function(){serviceCatalog(ps);}},'➕ Добавить приложение'),' ',E('button',{class:'btn cbi-button',type:'button',click:function(){manualEditor(null,ps);}},'🛠️ Вручную')]));
+  apps.appendChild(E('p',{},[E('button',{class:'btn cbi-button cbi-button-action',type:'button',click:function(){catalogEditor(ps,null);}},'➕ Добавить приложение'),' ',E('button',{class:'btn cbi-button',type:'button',click:function(){manualEditor(null,ps);}},'🛠️ Вручную')]));
   var vpn=E('div',{class:'cbi-section'},[E('h3',{},'🛡️ VPN')]);
   ps.forEach(function(p){vpn.appendChild(E('p',{},[(p.up?'🟢 ':'🔴 '),E('strong',{},p.name),' · '+p.interface,E('span',{style:'opacity:.6'},' · '+(p.up?'работает':'не подключён'))]));});
   vpn.appendChild(E('p',{},'💡 EasyRoute использует обычные системные интерфейсы AmneziaWG и не прячет VPN внутри себя.'));
