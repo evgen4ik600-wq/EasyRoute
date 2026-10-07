@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO_BASE='https://raw.githubusercontent.com/evgen4ik600-wq/EasyRoute/main/easyroute'
+REPO_BASE='https://raw.githubusercontent.com/evgen4ik600-wq/EasyRoute/main'
 AWG_INSTALL_URL='https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/03b62269e2edc168504f057cffaafda11b25ed92/amneziawg-install.sh'
 TMP='/tmp/easyroute-install'
 BACKUP='/etc/easyroute/backup'
@@ -95,7 +95,7 @@ fi
 [ -n "$IFACE" ] || IFACE="${EXISTING:-AWG}"
 
 rm -rf "$TMP"; mkdir -p "$TMP"
-FILES='files/usr/libexec/easyroute files/usr/libexec/easyroute-url-update files/usr/libexec/rpcd/luci.easyroute files/etc/init.d/easyroute files/etc/hotplug.d/iface/95-easyroute files/usr/share/luci/menu.d/luci-app-easyroute.json files/usr/share/rpcd/acl.d/luci-app-easyroute.json files/www/luci-static/resources/view/easyroute/routes.js files/www/luci-static/resources/view/easyroute/routes-v101.js files/www/luci-static/resources/view/easyroute/routes-v110.js'
+FILES='files/usr/libexec/easyroute files/usr/libexec/easyroute-url-update files/usr/libexec/rpcd/luci.easyroute files/etc/init.d/easyroute files/etc/hotplug.d/iface/95-easyroute files/usr/share/luci/menu.d/luci-app-easyroute.json files/usr/share/rpcd/acl.d/luci-app-easyroute.json files/www/luci-static/resources/view/easyroute/routes-v110.js'
 for f in $FILES; do
     mkdir -p "$TMP/$(dirname "$f")"
     wget -qO "$TMP/$f" "$REPO_BASE/$f" || fail "Не удалось скачать $f"
