@@ -1,0 +1,234 @@
+#!/bin/sh
+set -eu
+
+BASE='/etc/easyroute'
+STATE="$BASE/dns-state"
+DHCP_SECTION='@dnsmasq[0]'
+MARKER="$STATE/owned"
+PKG_MARKER="$STATE/stubby-installed-by-easyroute"
+
+say() { printf '%s\n' "$*"; }
+fail() { printf '%s\n' "$*" >&2; exit 1; }
+
+pkg_has() {
+    if command -v apk >/dev/null 2>&1; then
+        apk info -e "$1" >/dev/null 2>&1
+    elif command -v opkg >/dev/null 2>&1; then
+        opkg status "$1" 2>/dev/null | grep -q '^Status: install'
+    else
+        return 1
+    fi
+}
+
+install_stubby() {
+    pkg_has stubby && return 0
+
+    free_kb="$(df -k /overlay 2>/dev/null | awk 'NR==2{print $4}')"
+    [ -n "$free_kb" ] || free_kb="$(df -k / 2>/dev/null | awk 'NR==2{print $4}')"
+    [ "${free_kb:-0}" -ge 900 ] || fail "Недостаточно свободной flash для Stubby: ${free_kb:-0} КБ."
+
+    if command -v apk >/dev/null 2>&1; then
+        apk -U add stubby >/tmp/easyroute-stubby-pkg.log 2>&1 || {
+            cat /tmp/easyroute-stubby-pkg.log >&2 || true
+            fail 'Не удалось установить пакет stubby.'
+        }
+    else
+        opkg update >/tmp/easyroute-stubby-pkg.log 2>&1 &&
+        opkg install stubby >>/tmp/easyroute-stubby-pkg.log 2>&1 || {
+            cat /tmp/easyroute-stubby-pkg.log >&2 || true
+            fail 'Не удалось установить пакет stubby.'
+        }
+    fi
+
+    mkdir -p "$STATE"
+    : > "$PKG_MARKER"
+}
+
+backup_once() {
+    mkdir -p "$STATE"
+    [ -f "$MARKER" ] && return 0
+
+    if pkg_has stubby && [ ! -f "$PKG_MARKER" ]; then
+        fail 'Stubby уже установлен вне EasyRoute. Чтобы не затереть существующий DNS, EasyRoute не будет менять его автоматически.'
+    fi
+
+    cp -p /etc/config/dhcp "$STATE/dhcp.full" 2>/dev/null || true
+    cp -p /etc/config/stubby "$STATE/stubby.full" 2>/dev/null || true
+
+    if uci -q get "dhcp.$DHCP_SECTION.noresolv" >/dev/null 2>&1; then
+        uci -q get "dhcp.$DHCP_SECTION.noresolv" > "$STATE/noresolv"
+    else
+        : > "$STATE/noresolv.absent"
+    fi
+
+    uci -q get "dhcp.$DHCP_SECTION.server" 2>/dev/null | tr ' ' '\n' | sed '/^$/d' > "$STATE/server.list" || true
+    : > "$MARKER"
+}
+
+configure_stubby() {
+    provider="$1"
+    case "$provider" in
+        adguard)
+            r1='94.140.14.14'; r2='94.140.15.15'; auth='dns.adguard-dns.com'
+            ;;
+        cloudflare)
+            r1='1.1.1.1'; r2='1.0.0.1'; auth='cloudflare-dns.com'
+            ;;
+        google)
+            r1='8.8.8.8'; r2='8.8.4.4'; auth='dns.google'
+            ;;
+        *) fail 'Неизвестный DNS-провайдер.' ;;
+    esac
+
+    cat > /etc/config/stubby <<EOF
+config stubby 'global'
+    option manual '0'
+    list dns_transport 'GETDNS_TRANSPORT_TLS'
+    option tls_authentication '1'
+    option tls_query_padding_blocksize '128'
+    option appdata_dir '/var/lib/stubby'
+    option edns_client_subnet_private '1'
+    option idle_timeout '9000'
+    option round_robin_upstreams '1'
+    list listen_address '127.0.0.1@5453'
+
+config resolver 'easyroute_primary'
+    option address '$r1'
+    option tls_auth_name '$auth'
+    option tls_port '853'
+
+config resolver 'easyroute_secondary'
+    option address '$r2'
+    option tls_auth_name '$auth'
+    option tls_port '853'
+EOF
+}
+
+configure_dnsmasq() {
+    # Сохраняем split-DNS правила вида /domain/server, но убираем обычные
+    # upstream DNS, чтобы запросы не утекали к DNS провайдера.
+    current="$(uci -q get "dhcp.$DHCP_SECTION.server" 2>/dev/null || true)"
+    uci -q delete "dhcp.$DHCP_SECTION.server" || true
+    for item in $current; do
+        case "$item" in
+            /*) uci add_list "dhcp.$DHCP_SECTION.server=$item" ;;
+        esac
+    done
+    uci add_list "dhcp.$DHCP_SECTION.server=127.0.0.1#5453"
+    uci set "dhcp.$DHCP_SECTION.noresolv=1"
+    uci commit dhcp
+}
+
+restore_dnsmasq() {
+    if [ -f "$STATE/dhcp.full" ]; then
+        # Восстанавливаем только изменённые EasyRoute DNS-параметры, а не весь DHCP.
+        uci -q delete "dhcp.$DHCP_SECTION.server" || true
+        if [ -f "$STATE/server.list" ]; then
+            while IFS= read -r item; do
+                [ -n "$item" ] && uci add_list "dhcp.$DHCP_SECTION.server=$item"
+            done < "$STATE/server.list"
+        fi
+
+        if [ -f "$STATE/noresolv.absent" ]; then
+            uci -q delete "dhcp.$DHCP_SECTION.noresolv" || true
+        elif [ -f "$STATE/noresolv" ]; then
+            val="$(cat "$STATE/noresolv")"
+            uci set "dhcp.$DHCP_SECTION.noresolv=$val"
+        fi
+        uci commit dhcp
+    fi
+}
+
+rollback_enable() {
+    restore_dnsmasq || true
+    if [ -f "$STATE/stubby.full" ]; then
+        cp -p "$STATE/stubby.full" /etc/config/stubby
+        /etc/init.d/stubby restart >/dev/null 2>&1 || true
+    else
+        /etc/init.d/stubby stop >/dev/null 2>&1 || true
+        /etc/init.d/stubby disable >/dev/null 2>&1 || true
+    fi
+    /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+}
+
+enable_dot() {
+    provider="$1"
+    backup_once
+    install_stubby
+    configure_stubby "$provider"
+
+    /etc/init.d/stubby enable >/dev/null 2>&1 || true
+    /etc/init.d/stubby restart >/dev/null 2>&1 || {
+        rollback_enable
+        fail 'Stubby не запустился. DNS-настройки восстановлены.'
+    }
+    pidof stubby >/dev/null 2>&1 || {
+        rollback_enable
+        fail 'Stubby не работает. DNS-настройки восстановлены.'
+    }
+
+    configure_dnsmasq
+    if ! /etc/init.d/dnsmasq restart >/dev/null 2>&1; then
+        rollback_enable
+        fail 'dnsmasq не запустился с DoT. DNS-настройки восстановлены.'
+    fi
+
+    if ! nslookup openwrt.org 127.0.0.1 >/dev/null 2>&1; then
+        rollback_enable
+        fail 'Проверка DNS через DoT не прошла. Старые DNS-настройки восстановлены.'
+    fi
+
+    uci set easyroute.main.secure_dns='1'
+    uci set "easyroute.main.dns_provider=$provider"
+    uci commit easyroute
+    say "DoT включён: $provider"
+}
+
+disable_dot() {
+    restore_dnsmasq
+
+    if [ -f "$STATE/stubby.full" ]; then
+        cp -p "$STATE/stubby.full" /etc/config/stubby
+        /etc/init.d/stubby restart >/dev/null 2>&1 || true
+    elif [ -f "$PKG_MARKER" ]; then
+        /etc/init.d/stubby stop >/dev/null 2>&1 || true
+        /etc/init.d/stubby disable >/dev/null 2>&1 || true
+    fi
+
+    /etc/init.d/dnsmasq restart >/dev/null 2>&1 || fail 'Не удалось перезапустить dnsmasq после отключения DoT.'
+    nslookup openwrt.org 127.0.0.1 >/dev/null 2>&1 || fail 'DNS не работает после возврата системных настроек.'
+
+    uci set easyroute.main.secure_dns='0'
+    uci -q delete easyroute.main.dns_provider || true
+    uci commit easyroute
+    say 'DoT отключён, прежние DNS-настройки восстановлены.'
+}
+
+status() {
+    enabled="$(uci -q get easyroute.main.secure_dns 2>/dev/null || echo 0)"
+    provider="$(uci -q get easyroute.main.dns_provider 2>/dev/null || true)"
+    running=0
+    pidof stubby >/dev/null 2>&1 && running=1
+    noresolv="$(uci -q get "dhcp.$DHCP_SECTION.noresolv" 2>/dev/null || echo 0)"
+    servers="$(uci -q get "dhcp.$DHCP_SECTION.server" 2>/dev/null || true)"
+    forward=0
+    printf '%s\n' "$servers" | grep -Fq '127.0.0.1#5453' && forward=1
+    healthy=0
+    [ "$enabled" = '1' ] && [ "$running" = '1' ] && [ "$noresolv" = '1' ] && [ "$forward" = '1' ] && healthy=1
+    printf 'enabled=%s\nprovider=%s\nrunning=%s\nforward=%s\nhealthy=%s\n' "$enabled" "$provider" "$running" "$forward" "$healthy"
+}
+
+case "${1:-}" in
+    enable)
+        enable_dot "${2:-adguard}"
+        ;;
+    disable)
+        disable_dot
+        ;;
+    status)
+        status
+        ;;
+    *)
+        fail 'Usage: easyroute-dns enable <adguard|cloudflare|google> | disable | status'
+        ;;
+esac
