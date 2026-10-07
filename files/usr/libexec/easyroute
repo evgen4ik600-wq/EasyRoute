@@ -302,7 +302,14 @@ parse_all() {
             if(n==2 && ipv4ok(b[1]) && b[2] ~ /^[0-9]+$/ && b[2]+0<=32){print "4\t" line; next}
           }
           if(ipv4ok(line)){print "4\t" line; next}
-          if(index(line,":")>0){print "6\t" line; next}
+          if(index(line,":")>0){
+            if(line ~ /^[0-9A-Fa-f:]+$/){print "6\t" line; next}
+            if(line ~ /^[0-9A-Fa-f:]+\/[0-9]+$/){
+              n=split(line,b,"/");
+              if(n==2 && b[2]+0<=128){print "6\t" line; next}
+            }
+            print "X\t" raw; next
+          }
           if(line ~ /^[A-Za-z0-9_.-]+$/ && line !~ /^\./ && line !~ /\.\./){print "D\t" tolower(line); next}
           print "X\t" line
         }' "$file" >> "$out"
