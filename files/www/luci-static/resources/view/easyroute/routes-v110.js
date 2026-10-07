@@ -160,7 +160,7 @@ return view.extend({
  load:function(){return Promise.all([callStatus(),callList(),callProfiles(),callDevices(),callSelftest(),callDnsStatus()]);},
  render:function(data){
   var s=data[0]||{},rules=(data[1]||{}).rules||[],ps=(data[2]||{}).profiles||[],devs=(data[3]||{}).devices||[],health=data[4]||{},dnsState=data[5]||{};
-  var title=E('div',{class:'cbi-section'},[E('h2',{},'🚀 EasyRoute 1.1.25'),E('p',{},'VPN и маршрутизация без сложных настроек ✨')]);
+  var title=E('div',{class:'cbi-section'},[E('h2',{},'🚀 EasyRoute 1.2.0'),E('p',{},'VPN и маршрутизация без сложных настроек ✨')]);
   var state=E('div',{class:'cbi-section'},[
    E('h3',{},health.all_ok?'🟢 Всё работает':'🟠 Нужна проверка'),
    E('p',{},['🌍 Интернет · ',E('strong',{},health.internet?'доступен':'ошибка')]),
