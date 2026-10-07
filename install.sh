@@ -5,7 +5,7 @@ VERSION='1.2.6'
 REPO_REF='70d2d0c3f24e31a71dc643022390163b966304f1'
 REPO_BASE="https://raw.githubusercontent.com/evgen4ik600-wq/EasyRoute/$REPO_REF"
 AWG_INSTALL_URL='https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/03b62269e2edc168504f057cffaafda11b25ed92/amneziawg-install.sh'
-TMP="/tmp/easyroute-install.$"
+TMP="/tmp/easyroute-install.$$"
 BACKUP='/etc/easyroute/backup'
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT INT TERM
@@ -61,7 +61,7 @@ say "EasyRoute v$VERSION bootstrap: OpenWrt $VER, свободно $((FREE_KB/10
 # Устанавливаем поддержку AmneziaWG 3.1, но НЕ создаём VPN-подключение.
 if ! command -v awg >/dev/null 2>&1 || ! pkg_has kmod-amneziawg || ! pkg_has luci-proto-amneziawg; then
     say 'Устанавливаю поддержку AmneziaWG 3.1...'
-    AWG_SCRIPT="/tmp/easyroute-amneziawg-install.$"
+    AWG_SCRIPT="/tmp/easyroute-amneziawg-install.$$"
     wget -qO "$AWG_SCRIPT" "$AWG_INSTALL_URL" || fail 'Не удалось скачать установщик AmneziaWG.'
     [ -s "$AWG_SCRIPT" ] || fail 'Установщик AmneziaWG пустой.'
     sh -n "$AWG_SCRIPT" || fail 'Ошибка синтаксиса установщика AmneziaWG.'
@@ -162,14 +162,14 @@ awk '
   $0=="# EASYROUTE-URL-UPDATE-BEGIN" {skip=1; next}
   $0=="# EASYROUTE-URL-UPDATE-END" {skip=0; next}
   skip!=1 {print}
-' "$CRON" > /tmp/easyroute-cron.$
+' "$CRON" > /tmp/easyroute-cron.$$
 {
-    cat /tmp/easyroute-cron.$
+    cat /tmp/easyroute-cron.$$
     echo '# EASYROUTE-URL-UPDATE-BEGIN'
     echo '17 * * * * /usr/libexec/easyroute-url-update due >/tmp/easyroute-url-update.log 2>&1'
     echo '# EASYROUTE-URL-UPDATE-END'
 } > "$CRON"
-rm -f /tmp/easyroute-cron.$
+rm -f /tmp/easyroute-cron.$$
 /etc/init.d/cron enable >/dev/null 2>&1 || true
 /etc/init.d/cron restart >/dev/null 2>&1 || true
 
