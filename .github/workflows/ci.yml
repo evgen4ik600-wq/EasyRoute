@@ -48,7 +48,7 @@ jobs:
 
       - name: LuCI JavaScript syntax
         run: |
-          node -e "new Function(require('fs').readFileSync('files/www/luci-static/resources/view/easyroute/routes-v1216.js','utf8'))"
+          node -e "new Function(require('fs').readFileSync('files/www/luci-static/resources/view/easyroute/routes-v1217.js','utf8'))"
 
       - name: Installer references
         run: |
@@ -58,8 +58,8 @@ jobs:
           grep -Fq 'files/usr/libexec/easyroute-url-update' install.sh
           grep -Fq 'files/usr/libexec/easyroute-dns' install.sh
           grep -Fq 'files/usr/libexec/easyroute-catalog' install.sh
-          grep -Fq 'files/www/luci-static/resources/view/easyroute/routes-v1216.js' install.sh
-          grep -Fq '"path": "easyroute/routes-v1216"' files/usr/share/luci/menu.d/luci-app-easyroute.json
+          grep -Fq 'files/www/luci-static/resources/view/easyroute/routes-v1217.js' install.sh
+          grep -Fq '"path": "easyroute/routes-v1217"' files/usr/share/luci/menu.d/luci-app-easyroute.json
           ! grep -Rq 'openwrt-simple-ui\|clientnames/' install.sh easyroute-install.sh files
           ! grep -Rq 'openwrt-easyroute-install.sh' install.sh easyroute-install.sh files
 
@@ -72,7 +72,7 @@ jobs:
           dnsman = Path('files/usr/libexec/easyroute-dns').read_text()
           catalog = Path('files/usr/libexec/easyroute-catalog').read_text()
           rpc = Path('files/usr/libexec/rpcd/luci.easyroute').read_text()
-          ui = Path('files/www/luci-static/resources/view/easyroute/routes-v1216.js').read_text()
+          ui = Path('files/www/luci-static/resources/view/easyroute/routes-v1217.js').read_text()
           hotplug = Path('files/etc/hotplug.d/iface/95-easyroute').read_text()
           installer = Path('install.sh').read_text()
           uninstaller = Path('uninstall.sh').read_text()
@@ -117,7 +117,8 @@ jobs:
               "IPv6 input sanitized": "^[0-9A-Fa-f:]+$" in engine and "b[2]+0<=128" in engine,
               "profile old routes cleanup": "старые маршруты профиля" in rpc and "маршруты удаляемого профиля" in rpc,
               "fwmark bounded": "fwmark должен быть в диапазоне 1..255" in rpc,
-              "cache busted UI": "EasyRoute 1.2.16" in ui,
+              "cache busted UI": "EasyRoute 1.2.17" in ui,
+              "UI helpers restored": all(("function "+name+"(") in ui for name in ["notify","bytes","ago","closeBtn","profileSelect","refresh","manualEditor"]),
               "installer unique temp": 'easyroute-install.$' in installer and 'easyroute-cron.$' in installer,
               "uninstaller unique temp": 'easyroute-cron.$' in uninstaller and 'dnsmasq.conf.easyroute.$' in uninstaller,
               "transactional payload upgrade": 'previous' in installer and 'предыдущая версия восстановлена' in installer,
