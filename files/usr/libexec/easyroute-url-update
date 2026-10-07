@@ -18,14 +18,16 @@ acquire_lock() {
         return 0
     fi
     oldpid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
-    if [ -n "$oldpid" ] && ! kill -0 "$oldpid" 2>/dev/null; then
-        rm -rf "$LOCKDIR"
-        mkdir "$LOCKDIR" 2>/dev/null || return 1
-        printf '%s\n' "$$" > "$LOCKDIR/pid"
-        trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
-        return 0
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null &&
+       [ -r "/proc/$oldpid/cmdline" ] &&
+       tr '\000' ' ' < "/proc/$oldpid/cmdline" 2>/dev/null | grep -Fq 'easyroute-url-update'; then
+        return 1
     fi
-    return 1
+    rm -rf "$LOCKDIR"
+    mkdir "$LOCKDIR" 2>/dev/null || return 1
+    printf '%s\n' "$" > "$LOCKDIR/pid"
+    trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+    return 0
 }
 
 log() { logger -t easyroute-url "$*" 2>/dev/null || true; }
@@ -211,9 +213,9 @@ update_one_raw() {
     mv "$tmp" "$file"
     RULE_CHANGED=1
     count="$(awk 'BEGIN{n=0} {gsub(/\r/,""); s=$0; gsub(/^[ \t]+|[ \t]+$/, "", s); if(s!="" && s !~ /^#/)n++} END{print n}' "$file" 2>/dev/null || echo 0)"
-    write_status "$id" 'ok' "Updated: ${count:-0} lines"
-    log "$id: updated (${count:-0} lines)"
-    printf 'Updated: %s lines\n' "${count:-0}"
+    write_status "$id" 'pending' "Downloaded: ${count:-0} lines; waiting for apply"
+    log "$id: downloaded (${count:-0} lines), waiting for apply"
+    printf 'Downloaded: %s lines\n' "${count:-0}"
     return 0
 }
 
@@ -274,6 +276,8 @@ update_one() {
                 fail 'List downloaded, but routes could not be applied. Previous list restored.'
                 return 1
             fi
+            write_status "$id" 'ok' 'Updated and applied'
+            log "$id: updated and applied"
         fi
         rm -f "$backup"
         return 0
@@ -334,6 +338,12 @@ update_many() {
         done < "$changed_file"
         /usr/libexec/easyroute apply >/dev/null 2>&1 || true
         errors=$((errors+1))
+    elif [ "$ANY_CHANGED" = '1' ]; then
+        while IFS= read -r id; do
+            [ -n "$id" ] || continue
+            write_status "$id" 'ok' 'Updated and applied'
+            log "$id: updated and applied"
+        done < "$changed_file"
     fi
 
     rm -rf "$backup_dir"
