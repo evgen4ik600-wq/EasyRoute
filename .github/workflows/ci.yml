@@ -3,10 +3,18 @@ name: EasyRoute CI
 on:
   push:
     paths:
-      - 'easyroute/**'
-      - 'clientnames/**'
-      - 'openwrt-easyroute-install.sh'
-      - '.github/workflows/easyroute-ci.yml'
+      - 'install.sh'
+      - 'easyroute-install.sh'
+      - 'uninstall.sh'
+      - 'files/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'install.sh'
+      - 'easyroute-install.sh'
+      - 'uninstall.sh'
+      - 'files/**'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 jobs:
@@ -18,80 +26,58 @@ jobs:
       - name: Shell syntax
         run: |
           set -eu
-          dash -n openwrt-easyroute-install.sh
           dash -n install.sh
+          dash -n easyroute-install.sh
           dash -n uninstall.sh
           dash -n files/usr/libexec/easyroute
           dash -n files/usr/libexec/easyroute-url-update
           dash -n files/usr/libexec/rpcd/luci.easyroute
           dash -n files/etc/init.d/easyroute
           dash -n files/etc/hotplug.d/iface/95-easyroute
-          dash -n clientnames/install.sh
-          dash -n clientnames/uninstall.sh
-          dash -n clientnames/files/usr/libexec/rpcd/luci.clientnames
 
       - name: JSON syntax
         run: |
           python3 -m json.tool files/usr/share/luci/menu.d/luci-app-easyroute.json >/dev/null
           python3 -m json.tool files/usr/share/rpcd/acl.d/luci-app-easyroute.json >/dev/null
-          python3 -m json.tool clientnames/files/usr/share/rpcd/acl.d/luci-clientnames.json >/dev/null
 
       - name: LuCI JavaScript syntax
         run: |
-          node -e "new Function(require('fs').readFileSync('files/www/luci-static/resources/view/easyroute/routes.js','utf8'))"
           node -e "new Function(require('fs').readFileSync('files/www/luci-static/resources/view/easyroute/routes-v110.js','utf8'))"
-          node -e "new Function(require('fs').readFileSync('clientnames/files/www/luci-static/resources/view/status/include/61_clientnames.js','utf8'))"
 
       - name: Installer references
         run: |
           set -eu
-          grep -Fq '03b62269e2edc168504f057cffaafda11b25ed92' install.sh
-          grep -Fq "v3\\.1" install.sh
-          grep -Fq "dnsmasq-full" install.sh
-          grep -Fq "files/usr/libexec/easyroute" install.sh
-          grep -Fq "files/usr/libexec/easyroute-url-update" install.sh
-          grep -Fq "EASYROUTE-URL-UPDATE-BEGIN" install.sh
-          grep -Fq "files/www/luci-static/resources/view/easyroute/routes.js" install.sh
-          grep -Fq "files/www/luci-static/resources/view/easyroute/routes-v110.js" install.sh
+          grep -Fq 'evgen4ik600-wq/EasyRoute' install.sh
+          grep -Fq 'files/usr/libexec/easyroute' install.sh
+          grep -Fq 'files/usr/libexec/easyroute-url-update' install.sh
+          grep -Fq 'files/www/luci-static/resources/view/easyroute/routes-v110.js' install.sh
           grep -Fq '"path": "easyroute/routes-v110"' files/usr/share/luci/menu.d/luci-app-easyroute.json
+          ! grep -Rq 'openwrt-simple-ui\|clientnames/\|openwrt-easyroute-install.sh' install.sh easyroute-install.sh .github/workflows/ci.yml
 
       - name: EasyRoute invariants
         run: |
           python3 - <<'PY'
           from pathlib import Path
           engine = Path('files/usr/libexec/easyroute').read_text()
+          updater = Path('files/usr/libexec/easyroute-url-update').read_text()
+          rpc = Path('files/usr/libexec/rpcd/luci.easyroute').read_text()
+          ui = Path('files/www/luci-static/resources/view/easyroute/routes-v110.js').read_text()
           hotplug = Path('files/etc/hotplug.d/iface/95-easyroute').read_text()
           checks = {
-              "mark": "MARK='0x66'" in engine,
-              "table": "TABLE='166'" in engine,
-              "dnsmasq nftset": 'nftset=/' in engine,
-              "engine awg detection": 'amneziawg' in engine,
-              "hotplug awg detection": 'amneziawg' in hotplug,
-              "rule id enumerator exists": 'list_rule_ids()' in engine,
-              "fw4 transactional check": 'fw4 check' in engine and 'rollback_generated' in engine,
+              "rule id enumerator": 'list_rule_ids()' in engine,
+              "fw4 rollback": 'fw4 check' in engine and 'rollback_generated' in engine,
+              "policy conflict detection": 'rule_slot_conflict()' in engine,
+              "safe route deletion": 'fwmark "$MARK/0xff" lookup "$TABLE"' in engine,
+              "device block fallback": 'ether saddr @$setm drop' in engine,
+              "url success timestamp": '$id.success' in updater,
+              "url attempt timestamp": '$id.attempt' in updater,
+              "url rollback": 'previous list restored' in updater,
+              "transactional rule edit": 'Изменения отменены' in rpc,
+              "transactional delete": 'Удаление отменено' in rpc,
+              "real updater selftest": 'iplist.opencck.org' in rpc,
+              "specific routing selftest": '1066+n' in rpc and 'fwmark $m/0xff' in rpc,
+              "health uses all_ok": 'health.all_ok' in ui,
               "hotplug never adopts vpn": 'uci set "easyroute.main.interface=' not in hotplug,
-          }
-          failed = [name for name, ok in checks.items() if not ok]
-          for name, ok in checks.items():
-              print(f"{name}: {'OK' if ok else 'FAIL'}")
-          if failed:
-              raise SystemExit("Failed: " + ", ".join(failed))
-          PY
-
-      - name: Client Names invariants
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          js = Path('clientnames/files/www/luci-static/resources/view/status/include/61_clientnames.js').read_text()
-          rpc = Path('clientnames/files/usr/libexec/rpcd/luci.clientnames').read_text()
-          ins = Path('clientnames/install.sh').read_text()
-          checks = {
-              "does not replace stock wifi file": 'cp ' + '"$TMP/files/www/luci-static/resources/view/status/include/60_wifi.js"' not in ins,
-              "enhances stock table": 'wifi_assoclist_table' in js,
-              "rename control": 'Переименовать устройство' in js,
-              "rpc list": "method: 'list'" in js,
-              "rpc set": "method: 'set'" in js,
-              "stores UCI config": "CFG='clientnames'" in rpc,
           }
           failed = [name for name, ok in checks.items() if not ok]
           for name, ok in checks.items():
