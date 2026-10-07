@@ -1,5 +1,22 @@
 # Changelog
 
+## EasyRoute 1.2.20
+
+Runtime-аудит на реальном OpenWrt/Xiaomi после 1.2.18.
+
+Исправлено и усилено:
+
+- исправлен падёж динамического каталога OpenCCK при загрузке `jshn.sh` из-за `set -u`;
+- self-test теперь реально запускает catalog helper, поэтому «Всё работает» не показывается при сломанном каталоге;
+- обнаруживается уже настроенный внешний локальный защищённый DNS (`https-dns-proxy`, `dnscrypt-proxy`, localhost resolver), и EasyRoute не перезаписывает его Stubby;
+- LuCI показывает, что защищённый DNS уже существует, и не предлагает поверх него включать EasyRoute DoT;
+- для новых catalog bundles IPv4 CIDR стали **опциональными и выключены по умолчанию**: OpenCCK может возвращать очень широкие подсети, которые захватывают посторонний трафик;
+- добавлен read-only `/usr/libexec/easyroute-audit` с редактированием секретов AWG;
+- audit проверяет OpenCCK Main/Beta, multi-site domains/CIDR, RPC, AWG, policy routing, nftables, DNS, cron и locks;
+- CI проверяет catalog helper, CIDR opt-in, external encrypted DNS, audit redaction и LuCI wiring.
+
+Проверенный payload: `e4ebe581e78d6a1a40c8912cb5c38d3391f0f12a`.
+
 ## EasyRoute 1.2.16
 
 Аудит стабильности и безопасности после 1.2.0.
