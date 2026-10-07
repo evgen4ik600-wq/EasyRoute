@@ -272,7 +272,7 @@ save_rule() {
     had_list=0
     if [ -f "$LISTDIR/$id.txt" ]; then cp -p "$LISTDIR/$id.txt" "$listbak"; had_list=1; fi
 
-    tmp="$LISTDIR/.$id.tmp.$"
+    tmp="$LISTDIR/.$id.tmp.$$"
     printf '%s\n' "$content" | tr -d '\r' > "$tmp"
     mv "$tmp" "$LISTDIR/$id.txt"
 
