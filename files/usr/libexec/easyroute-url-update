@@ -7,6 +7,7 @@ RUNDIR='/tmp/easyroute/url-updates'
 MAX_BYTES=262144
 RESERVE_KB=1024
 DEFAULT_INTERVAL=86400
+RETRY_INTERVAL=300
 
 log() { logger -t easyroute-url "$*" 2>/dev/null || true; }
 fail() { printf '%s\n' "$*" >&2; return 1; }
@@ -20,7 +21,12 @@ write_status() {
     local id="$1" state="$2" msg="${3:-}" now
     now="$(date +%s)"
     mkdir -p "$RUNDIR"
-    printf '%s\n' "$now" > "$RUNDIR/$id.last"
+    printf '%s\n' "$now" > "$RUNDIR/$id.attempt"
+    if [ "$state" = 'ok' ]; then
+        printf '%s\n' "$now" > "$RUNDIR/$id.success"
+        # Совместимость со старыми версиями UI.
+        printf '%s\n' "$now" > "$RUNDIR/$id.last"
+    fi
     printf '%s\n' "$state" > "$RUNDIR/$id.state"
     printf '%s\n' "$msg" > "$RUNDIR/$id.message"
 }
@@ -158,19 +164,24 @@ update_one_raw() {
 }
 
 is_due() {
-    local id="$1" interval last now
+    local id="$1" interval success attempt now
     interval="$(uci -q get "easyroute.$id.update_interval" 2>/dev/null || echo "$DEFAULT_INTERVAL")"
     case "$interval" in
         ''|*[!0-9]*) interval="$DEFAULT_INTERVAL" ;;
     esac
     [ "$interval" -ge 3600 ] 2>/dev/null || interval=3600
 
-    last="$(cat "$RUNDIR/$id.last" 2>/dev/null || echo 0)"
-    case "$last" in
-        ''|*[!0-9]*) last=0 ;;
-    esac
+    success="$(cat "$RUNDIR/$id.success" 2>/dev/null || cat "$RUNDIR/$id.last" 2>/dev/null || echo 0)"
+    attempt="$(cat "$RUNDIR/$id.attempt" 2>/dev/null || echo 0)"
+    case "$success" in ''|*[!0-9]*) success=0 ;; esac
+    case "$attempt" in ''|*[!0-9]*) attempt=0 ;; esac
     now="$(date +%s)"
-    [ $((now-last)) -ge "$interval" ]
+
+    if [ "$success" -eq 0 ]; then
+        [ $((now-attempt)) -ge "$RETRY_INTERVAL" ]
+    else
+        [ $((now-success)) -ge "$interval" ]
+    fi
 }
 
 apply_if_changed() {
@@ -179,7 +190,7 @@ apply_if_changed() {
 }
 
 update_one() {
-    local id="$1"
+    local id="$1" file backup had_old=0
     [ "$(uci -q get "easyroute.$id" 2>/dev/null || true)" = 'rule' ] || {
         fail 'Rule not found'
         return 1
@@ -189,22 +200,42 @@ update_one() {
         return 1
     }
 
+    file="$LISTDIR/$id.txt"
+    backup="/tmp/easyroute-url-old.$id.$$"
+    if [ -f "$file" ]; then
+        cp -p "$file" "$backup"
+        had_old=1
+    fi
+
     if update_one_raw "$id"; then
         if [ "${RULE_CHANGED:-0}" = '1' ]; then
-            /usr/libexec/easyroute apply || {
-                fail 'List downloaded, but routes could not be applied'
+            if ! /usr/libexec/easyroute apply; then
+                if [ "$had_old" = '1' ]; then
+                    mv "$backup" "$file"
+                else
+                    rm -f "$file" "$backup"
+                fi
+                /usr/libexec/easyroute apply >/dev/null 2>&1 || true
+                write_status "$id" 'error' 'Downloaded list rejected by apply; previous list restored'
+                fail 'List downloaded, but routes could not be applied. Previous list restored.'
                 return 1
-            }
+            fi
         fi
+        rm -f "$backup"
         return 0
     fi
+    rm -f "$backup"
     return 1
 }
 
 update_many() {
-    local mode="$1" id auto errors=0
+    local mode="$1" id auto errors=0 backup_dir changed_file file
     ANY_CHANGED=0
     mkdir -p "$RUNDIR"
+    backup_dir="/tmp/easyroute-url-batch.$$"
+    changed_file="$backup_dir/changed"
+    mkdir -p "$backup_dir"
+    : > "$changed_file"
 
     for id in $(rule_ids); do
         [ "$(uci -q get "easyroute.$id.source_type" 2>/dev/null || echo manual)" = 'url' ] || continue
@@ -215,16 +246,40 @@ update_many() {
             is_due "$id" || continue
         fi
 
+        file="$LISTDIR/$id.txt"
+        if [ -f "$file" ]; then
+            cp -p "$file" "$backup_dir/$id.old"
+        else
+            : > "$backup_dir/$id.absent"
+        fi
+
         if update_one_raw "$id"; then
-            [ "${RULE_CHANGED:-0}" = '1' ] && ANY_CHANGED=1
+            if [ "${RULE_CHANGED:-0}" = '1' ]; then
+                ANY_CHANGED=1
+                printf '%s\n' "$id" >> "$changed_file"
+            fi
         else
             errors=$((errors+1))
+            rm -f "$backup_dir/$id.old" "$backup_dir/$id.absent"
         fi
     done
 
-    if ! apply_if_changed; then
+    if [ "$ANY_CHANGED" = '1' ] && ! /usr/libexec/easyroute apply; then
+        while IFS= read -r id; do
+            [ -n "$id" ] || continue
+            file="$LISTDIR/$id.txt"
+            if [ -f "$backup_dir/$id.old" ]; then
+                cp -p "$backup_dir/$id.old" "$file"
+            elif [ -f "$backup_dir/$id.absent" ]; then
+                rm -f "$file"
+            fi
+            write_status "$id" 'error' 'Batch apply failed; previous list restored'
+        done < "$changed_file"
+        /usr/libexec/easyroute apply >/dev/null 2>&1 || true
         errors=$((errors+1))
     fi
+
+    rm -rf "$backup_dir"
 
     if [ "$errors" -gt 0 ]; then
         fail "Update finished with errors: $errors"
