@@ -173,6 +173,7 @@ table_conflict() {
 
     # Любое другое правило, использующее эту таблицу, означает чужое владение.
     if [ -n "$rules" ]; then
+        [ -n "$own" ] || return 0
         foreign="$(printf '%s\n' "$rules" | grep -Fv "$own" || true)"
         [ -z "$foreign" ] || return 0
     fi
@@ -194,7 +195,15 @@ route_up() {
             return 1
         fi
         if table_conflict 4 "$prio" "$m" "$t"; then
-            echo "Конфликт routing table $t: таблица уже используется другим правилом." >&2
+            echo "Конфликт IPv4 routing table $t: таблица уже используется другим правилом." >&2
+            return 1
+        fi
+        if rule_slot_conflict 6 "$prio" "$m" "$t"; then
+            echo "Конфликт IPv6 ip rule: priority $prio уже занята другим правилом." >&2
+            return 1
+        fi
+        if table_conflict 6 "$prio" "$m" "$t"; then
+            echo "Конфликт IPv6 routing table $t: таблица уже используется другим правилом." >&2
             return 1
         fi
         n=$((n+1))
