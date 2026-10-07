@@ -17,7 +17,7 @@ LOCKDIR='/tmp/easyroute-engine.lock'
 
 acquire_lock() {
     if mkdir "$LOCKDIR" 2>/dev/null; then
-        printf '%s\n' "$" > "$LOCKDIR/pid"
+        printf '%s\n' "$$" > "$LOCKDIR/pid"
         trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
         return 0
     fi
@@ -25,7 +25,7 @@ acquire_lock() {
     if [ -n "$oldpid" ] && ! kill -0 "$oldpid" 2>/dev/null; then
         rm -rf "$LOCKDIR"
         mkdir "$LOCKDIR" 2>/dev/null || return 1
-        printf '%s\n' "$" > "$LOCKDIR/pid"
+        printf '%s\n' "$$" > "$LOCKDIR/pid"
         trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
         return 0
     fi
