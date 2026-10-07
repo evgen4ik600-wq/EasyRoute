@@ -31,6 +31,7 @@ jobs:
           dash -n uninstall.sh
           dash -n files/usr/libexec/easyroute
           dash -n files/usr/libexec/easyroute-url-update
+          dash -n files/usr/libexec/easyroute-dns
           dash -n files/usr/libexec/rpcd/luci.easyroute
           dash -n files/etc/init.d/easyroute
           dash -n files/etc/hotplug.d/iface/95-easyroute
@@ -50,6 +51,7 @@ jobs:
           grep -Fq 'evgen4ik600-wq/EasyRoute' install.sh
           grep -Fq 'files/usr/libexec/easyroute' install.sh
           grep -Fq 'files/usr/libexec/easyroute-url-update' install.sh
+          grep -Fq 'files/usr/libexec/easyroute-dns' install.sh
           grep -Fq 'files/www/luci-static/resources/view/easyroute/routes-v110.js' install.sh
           grep -Fq '"path": "easyroute/routes-v110"' files/usr/share/luci/menu.d/luci-app-easyroute.json
           ! grep -Rq 'openwrt-simple-ui\|clientnames/' install.sh easyroute-install.sh files
@@ -61,6 +63,7 @@ jobs:
           from pathlib import Path
           engine = Path('files/usr/libexec/easyroute').read_text()
           updater = Path('files/usr/libexec/easyroute-url-update').read_text()
+          dnsman = Path('files/usr/libexec/easyroute-dns').read_text()
           rpc = Path('files/usr/libexec/rpcd/luci.easyroute').read_text()
           ui = Path('files/www/luci-static/resources/view/easyroute/routes-v110.js').read_text()
           hotplug = Path('files/etc/hotplug.d/iface/95-easyroute').read_text()
@@ -80,6 +83,13 @@ jobs:
               "real updater selftest": 'iplist.opencck.org' in rpc,
               "specific routing selftest": '1066+n' in rpc and 'fwmark $m/0xff' in rpc,
               "health uses all_ok": 'health.all_ok' in ui,
+              "dot manager uses stubby": '127.0.0.1#5453' in dnsman and 'GETDNS_TRANSPORT_TLS' in dnsman,
+              "dot does not touch peerdns": 'peerdns' not in dnsman,
+              "dot does not disable ipv6": 'network.wan6' not in dnsman and 'ula_prefix' not in dnsman,
+              "dot rollback": 'rollback_enable' in dnsman and 'restore_dnsmasq' in dnsman,
+              "dot refuses external stubby": 'Stubby уже установлен вне EasyRoute' in dnsman,
+              "dot rpc": 'dns_status()' in rpc and 'dns_apply()' in rpc,
+              "dot ui": 'Защищённый DNS (DoT)' in ui,
               "hotplug never adopts vpn": 'uci set "easyroute.main.interface=' not in hotplug,
           }
           failed = [name for name, ok in checks.items() if not ok]
