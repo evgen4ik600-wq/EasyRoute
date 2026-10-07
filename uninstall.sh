@@ -18,9 +18,9 @@ rm -f /usr/share/nftables.d/chain-pre/forward/90-easyroute-forward.nft
 rm -f /usr/share/nftables.d/table-post/90-easyroute-nat.nft
 
 if [ -f /etc/dnsmasq.conf ]; then
-    awk 'BEGIN{skip=0} /^# EASYROUTE-BEGIN$/{skip=1;next} /^# EASYROUTE-END$/{skip=0;next} skip==0{print}' /etc/dnsmasq.conf > /tmp/dnsmasq.conf.easyroute.$
-    cat /tmp/dnsmasq.conf.easyroute > /etc/dnsmasq.conf
-    rm -f /tmp/dnsmasq.conf.easyroute
+    awk 'BEGIN{skip=0} /^# EASYROUTE-BEGIN$/{skip=1;next} /^# EASYROUTE-END$/{skip=0;next} skip==0{print}' /etc/dnsmasq.conf > /tmp/dnsmasq.conf.easyroute.$$
+    cat /tmp/dnsmasq.conf.easyroute.$$ > /etc/dnsmasq.conf
+    rm -f /tmp/dnsmasq.conf.easyroute.$$
 fi
 
 rm -f /usr/libexec/easyroute /usr/libexec/easyroute-url-update /usr/libexec/easyroute-dns /usr/libexec/easyroute-catalog /usr/libexec/rpcd/luci.easyroute /etc/init.d/easyroute /etc/hotplug.d/iface/95-easyroute
@@ -33,9 +33,9 @@ if [ -f /etc/crontabs/root ]; then
       $0=="# EASYROUTE-URL-UPDATE-BEGIN" {skip=1; next}
       $0=="# EASYROUTE-URL-UPDATE-END" {skip=0; next}
       skip!=1 {print}
-    ' /etc/crontabs/root > /tmp/easyroute-cron.$
-    cat /tmp/easyroute-cron.$ > /etc/crontabs/root
-    rm -f /tmp/easyroute-cron.$
+    ' /etc/crontabs/root > /tmp/easyroute-cron.$$
+    cat /tmp/easyroute-cron.$$ > /etc/crontabs/root
+    rm -f /tmp/easyroute-cron.$$
     /etc/init.d/cron restart >/dev/null 2>&1 || true
 fi
 rm -rf /tmp/easyroute/url-updates
